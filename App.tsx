@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ethers, BrowserProvider, Contract, formatEther, parseEther, isAddress } from 'ethers';
-import { CONTRACT_ADDRESS, CONTRACT_ABI } from './constants';
+import { ethers, BrowserProvider, Contract, formatEther, isAddress } from 'ethers';
+import { CONTRACT_ADDRESS, CONTRACT_ABI, BSC_RPC_URL } from './constants';
 import { KingdomData, LogEntry } from './types';
 
 declare global {
@@ -11,34 +11,33 @@ declare global {
 }
 
 const BUILDING_TYPES = [
-  { type: 1, name: "Sentry", cost: 10000, yield: 8, desc: "Basic unit" },
-  { type: 2, name: "Outpost", cost: 28000, yield: 24, desc: "Monitor" },
-  { type: 3, name: "Fort", cost: 54000, yield: 48, desc: "Defense" },
-  { type: 4, name: "Citadel", cost: 100000, yield: 96, desc: "Command" },
-  { type: 5, name: "Stronghold", cost: 250000, yield: 248, desc: "Elite" },
-  { type: 6, name: "Bastion", cost: 500000, yield: 520, desc: "Hub" },
-  { type: 7, name: "Capital", cost: 1000000, yield: 1100, desc: "Center" },
-  { type: 8, name: "Core", cost: 2000000, yield: 2300, desc: "Supreme" },
+  { type: 1, name: "Sentry", cost: 10000, yield: 8, icon: "🏰" },
+  { type: 2, name: "Outpost", cost: 28000, yield: 24, icon: "⚔️" },
+  { type: 3, name: "Fort", cost: 54000, yield: 48, icon: "🛡️" },
+  { type: 4, name: "Citadel", cost: 100000, yield: 96, icon: "🏛️" },
+  { type: 5, name: "Stronghold", cost: 250000, yield: 248, icon: "🏯" },
+  { type: 6, name: "Bastion", cost: 500000, yield: 520, icon: "⚒️" },
+  { type: 7, name: "Capital", cost: 1000000, yield: 1100, icon: "👑" },
+  { type: 8, name: "Core", cost: 2000000, yield: 2300, icon: "💎" },
 ];
 
 const StatusLog: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {
   const logEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
   return (
-    <div className="bg-black/90 border border-green-900/30 rounded p-2 h-24 overflow-y-auto font-mono text-[9px] custom-scrollbar">
-      <div className="text-green-800 mb-1 uppercase tracking-widest border-b border-green-900/10 pb-0.5 flex justify-between font-bold">
-        <span>LOG_STREAM</span>
-        <span className="animate-pulse opacity-50">SYNC_OK</span>
+    <div className="apple-dark-card p-4 h-[100px] overflow-y-auto custom-scrollbar mt-4">
+      <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 italic">Terminal_Output</h3>
+      <div className="space-y-1">
+        {logs.map((log) => (
+          <div key={log.id} className="text-[11px] flex gap-3 border-b border-white/5 pb-1 items-center">
+            <span className="text-zinc-600 font-mono w-14">{log.timestamp}</span>
+            <span className={`${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : 'text-zinc-400'} truncate`}>
+              {log.message}
+            </span>
+          </div>
+        ))}
+        <div ref={logEndRef} />
       </div>
-      {logs.map((log) => (
-        <div key={log.id} className="mb-0.5 flex leading-none">
-          <span className="text-green-900 mr-1.5">[{log.timestamp.split(' ')[0]}]</span>
-          <span className={log.type === 'error' ? 'text-red-600' : log.type === 'success' ? 'text-green-400' : 'text-green-700'}>
-            {log.message}
-          </span>
-        </div>
-      ))}
-      <div ref={logEndRef} />
     </div>
   );
 };
@@ -47,16 +46,41 @@ export default function App() {
   const [account, setAccount] = useState<string | null>(null);
   const [viewAddress, setViewAddress] = useState<string>('');
   const [balance, setBalance] = useState<string>('0');
+  const [contractBalance, setContractBalance] = useState<{bnb: string, usd: string}>({bnb: '0', usd: '0'});
   const [kingdom, setKingdom] = useState<KingdomData | null>(null);
   const [accumulated, setAccumulated] = useState({ gold: 0, gems: 0 });
   const [loading, setLoading] = useState<boolean>(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  
-  const [winChance, setWinChance] = useState<string>('50'); 
+  const [winChance, setWinChance] = useState<string>('50');
+  const [bnbPrice, setBnbPrice] = useState<number>(0);
 
   const addLog = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
-    setLogs(prev => [...prev.slice(-29), { id: Math.random().toString(36).substr(2, 9), message, type, timestamp: new Date().toLocaleTimeString() }]);
+    setLogs(prev => [...prev.slice(-10), { id: Math.random().toString(36).substr(2, 9), message, type, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }]);
   };
+
+  const fetchGlobalData = async () => {
+    try {
+      const provider = new ethers.JsonRpcProvider(BSC_RPC_URL);
+      const cBal = await provider.getBalance(CONTRACT_ADDRESS);
+      const bnbVal = formatEther(cBal);
+      const priceRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT');
+      const priceData = await priceRes.json();
+      const price = parseFloat(priceData.price);
+      setBnbPrice(price);
+      setContractBalance({
+        bnb: Number(bnbVal).toFixed(2),
+        usd: (Number(bnbVal) * price).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+      });
+    } catch (err) {
+      console.error("Global sync failed", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchGlobalData();
+    const interval = setInterval(fetchGlobalData, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -88,22 +112,22 @@ export default function App() {
   }, []);
 
   const connectWallet = async () => {
-    if (!window.ethereum) return addLog('Web3 Missing', 'error');
+    if (!window.ethereum) return addLog('MetaMask не найден', 'error');
     try {
       setLoading(true);
       const provider = new BrowserProvider(window.ethereum);
       const accounts = await provider.send("eth_requestAccounts", []);
       setAccount(accounts[0]);
       setViewAddress(accounts[0]);
-      addLog(`User linked: ${accounts[0].slice(0, 6)}`, 'success');
+      addLog(`Кошелек подключен`, 'success');
       await refreshData(accounts[0]);
-    } catch (err: any) { addLog(err.message, 'error'); } finally { setLoading(false); }
+    } catch (err: any) { addLog('Ошибка подключения', 'error'); } finally { setLoading(false); }
   };
 
   const refreshData = async (addr: string) => {
     if (!isAddress(addr)) return;
     try {
-      const provider = new ethers.JsonRpcProvider('https://bsc-dataseed.binance.org/');
+      const provider = new ethers.JsonRpcProvider(BSC_RPC_URL);
       const bal = await provider.getBalance(addr);
       setBalance(formatEther(bal));
       const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
@@ -118,28 +142,28 @@ export default function App() {
         battleTime: Number(kd[6]),
         tiles: Array.from(kd[11]).map(t => Number(t))
       });
-      addLog('Data synced', 'info');
-    } catch (err: any) { addLog(`Sync error`, 'error'); }
+    } catch (err: any) { addLog('Sync...', 'info'); }
   };
 
   const executeTx = async (methodName: string, params: any[], value: bigint = 0n) => {
-    if (!account) return addLog('Login required', 'error');
+    if (!account) return addLog('Подключите кошелек', 'error');
     try {
       setLoading(true);
       const provider = new BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
       const tx = await contract[methodName](...params, { value });
-      addLog(`Pending: ${methodName}`, 'info');
+      addLog(`TX Sent`, 'info');
       await tx.wait();
-      addLog(`Success!`, 'success');
+      addLog(`TX Confirmed`, 'success');
       await refreshData(viewAddress || account);
-    } catch (err: any) { addLog(`Failed`, 'error'); } finally { setLoading(false); }
+      fetchGlobalData();
+    } catch (err: any) { addLog(`Error`, 'error'); } finally { setLoading(false); }
   };
 
   const build = (type: number, cost: number) => {
     const firstFree = kingdom?.tiles.indexOf(0);
-    if (firstFree === -1 || firstFree === undefined) return addLog('Area full', 'error');
+    if (firstFree === -1 || firstFree === undefined) return addLog('Limit reached', 'error');
     if (totalGold < cost) return addLog('No gold', 'error');
     executeTx('placeBuildings', [[firstFree], type]);
   };
@@ -155,248 +179,219 @@ export default function App() {
     return { id, raw, baseType, upgrades, displayLevel };
   }).filter(b => b.raw > 0) || [];
 
-  // Battle reward calculation
   const dailyYield = (kingdom?.perHour || 0) * 24;
   const chanceNum = parseInt(winChance);
   const potentialReward = Math.floor(dailyYield * (chanceNum / 100) * 1.5);
   const potentialLoss = Math.floor(dailyYield * 0.5);
 
-  const withdrawAllGems = () => {
-    if (!totalGems || totalGems <= 0) return addLog('No gems available', 'error');
-    // Using floor to be safe, as contract might have slightly different claim sync
+  const withdrawAll = () => {
+    if (totalGems <= 0) return addLog('Empty storage', 'error');
     executeTx('sellGems', [totalGems]);
   };
 
   return (
-    <div className="min-h-screen matrix-bg text-green-500 font-mono p-3 md:p-5 selection:bg-green-500 selection:text-black">
-      <div className="max-w-6xl mx-auto space-y-4">
-        
-        {/* HEADER */}
-        <div className="flex flex-col sm:flex-row justify-between items-center bg-black/40 border border-green-900/20 p-3 rounded">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl md:text-2xl font-black tracking-tight uppercase italic text-green-500 drop-shadow-[0_0_8px_#0f0]">
-              KINGDOM_v5
-            </h1>
-            <div className="hidden md:flex items-center gap-2 px-2 py-0.5 border border-green-900/40 text-[9px] font-bold text-green-900 uppercase">
-              <span className={`h-1.5 w-1.5 rounded-full ${account ? 'bg-green-500 shadow-[0_0_5px_#0f0]' : 'bg-red-500'}`}></span>
-              {account ? account.slice(0, 12) + '...' : 'Disconnected'}
+    <div className="min-h-screen bg-black text-white px-4 py-2 md:px-8 lg:px-12 max-w-[1440px] mx-auto overflow-hidden flex flex-col">
+      
+      {/* HEADER */}
+      <header className="flex flex-col lg:flex-row justify-between items-center mb-4 gap-4">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center text-xl font-black">K</div>
+          <div>
+            <h1 className="text-xl font-black tracking-tight uppercase italic">Kingdom Commander</h1>
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Core Protocol v5.4</span>
             </div>
           </div>
+        </div>
 
-          <div className="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+        <div className="flex gap-3 items-center">
+          <div className="apple-dark-card px-4 py-2 flex items-center gap-3 border-emerald-500/10 bg-emerald-500/5">
+            <div className="text-right">
+              <span className="block text-[8px] font-bold text-emerald-500 uppercase">Contract TVL</span>
+              <span className="text-[14px] font-black tabular-nums text-emerald-400">{contractBalance.usd}</span>
+            </div>
+            <div className="h-6 w-[1px] bg-emerald-500/20"></div>
+            <span className="text-[11px] font-bold text-zinc-500 tabular-nums">{contractBalance.bnb} BNB</span>
+          </div>
+
+          <div className="flex gap-3 items-center apple-dark-card p-1 pr-3 h-11">
             <input 
               type="text" 
-              placeholder="SCAN ADDR..."
+              placeholder="Address..."
               value={viewAddress}
               onChange={(e) => setViewAddress(e.target.value)}
-              className="bg-black/60 border border-green-900/60 px-3 py-1.5 text-[11px] focus:border-green-500 outline-none flex-1 sm:w-48"
+              className="bg-zinc-800/40 border-none px-3 py-1.5 rounded-lg text-[12px] outline-none w-32 font-medium"
             />
-            <button onClick={() => refreshData(viewAddress)} className="px-3 py-1.5 border border-green-500/50 hover:bg-green-500 hover:text-black text-[10px] font-bold uppercase transition-all">Scan</button>
-            <button onClick={connectWallet} className="px-4 py-1.5 bg-green-500 text-black font-bold text-[10px] uppercase transition-all hover:shadow-[0_0_10px_#0f0]">
-              {account ? 'Linked' : 'Link'}
-            </button>
+            {account ? (
+              <div className="flex items-center gap-2 pl-1 border-l border-white/5">
+                 <span className="text-[11px] font-bold text-zinc-400">{account.slice(0, 4)}...{account.slice(-4)}</span>
+                 <div className="w-7 h-7 bg-zinc-800 rounded-lg border border-white/5"></div>
+              </div>
+            ) : (
+              <button onClick={connectWallet} className="bg-white text-black px-4 h-8 rounded-lg font-bold text-[11px]">Connect</button>
+            )}
           </div>
         </div>
+      </header>
 
-        {/* COMPACT STATS */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: 'GOLD', val: totalGold, color: 'text-green-400', glow: accumulated.gold > 0 },
-            { label: 'GEMS', val: totalGems, color: 'text-cyan-400', glow: accumulated.gems > 0 },
-            { label: 'YIELD', val: kingdom?.perHour ?? 0, unit: 'G/H', color: 'text-yellow-500' },
-            { label: 'WALLET', val: Number(balance).toFixed(4), unit: 'BNB', color: 'text-green-800' }
-          ].map((s, i) => (
-            <div key={i} className="bg-black/80 border border-green-900/30 p-3 group relative overflow-hidden flex flex-col justify-center">
-               <div className="text-[8px] text-green-900 font-black uppercase mb-0.5">{s.label}</div>
-               <div className={`text-lg md:text-xl font-black ${s.color} tracking-tighter leading-tight`}>
-                 {s.val.toLocaleString('fullwide', {useGrouping:false})} 
-                 {s.unit && <span className="text-[9px] font-normal opacity-30 ml-1">{s.unit}</span>}
-               </div>
-               {s.glow && <div className="absolute top-1 right-1 w-1 h-1 bg-green-500 rounded-full animate-ping"></div>}
+      {/* STATS PANEL */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        {[
+          { label: 'Золото', val: totalGold, color: 'text-amber-400', icon: '🟡' },
+          { label: 'Гемы', val: totalGems, color: 'text-indigo-400', icon: '💎' },
+          { label: 'Доход/час', val: kingdom?.perHour ?? 0, color: 'text-emerald-400', icon: '📈' },
+          { label: 'Баланс BNB', val: Number(balance).toFixed(4), color: 'text-white', icon: '💳' }
+        ].map((s, i) => (
+          <div key={i} className="apple-dark-card p-4 flex justify-between items-center group">
+            <div>
+              <div className="text-[9px] font-bold text-zinc-600 uppercase mb-0.5">{s.label}</div>
+              <div className={`text-xl font-black ${s.color} tabular-nums`}>{s.val.toLocaleString()}</div>
             </div>
-          ))}
-        </div>
+            <span className="text-lg opacity-20">{s.icon}</span>
+          </div>
+        ))}
+      </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          
-          {/* LEFT: TOOLS & STORE */}
-          <div className="lg:col-span-4 space-y-4">
-            <div className="bg-black/70 border border-green-900/30 p-4">
-              <h2 className="text-green-600 font-bold text-xs mb-3 uppercase flex justify-between">
-                <span>CONSTRUCTION</span>
-                <span className="opacity-40">SELECT_MODEL</span>
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
-                {BUILDING_TYPES.map((b) => (
-                  <div key={b.type} className="p-2 bg-green-900/5 border border-green-900/20 hover:border-green-500/40 transition-all flex items-center justify-between group">
-                    <div className="leading-none">
-                      <div className="text-green-400 font-bold text-[11px] uppercase">{b.name}</div>
-                      <div className="flex gap-2 mt-1">
-                        <span className="text-green-900 font-bold text-[9px]">{b.cost.toLocaleString()}G</span>
-                        <span className="text-yellow-600/80 font-bold text-[9px]">+{b.yield}H</span>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">
+        
+        {/* LEFT COLUMN: SHOP & PAYOUT */}
+        <div className="lg:col-span-4 flex flex-col gap-4">
+          {/* STORE: Fixed Height */}
+          <div className="apple-dark-card p-6 h-[460px] flex flex-col">
+            <h2 className="text-[11px] font-bold mb-4 text-zinc-400 uppercase tracking-[0.2em] border-b border-white/5 pb-2">Unit_Store</h2>
+            <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-2 h-[360px]">
+              {BUILDING_TYPES.map((b) => {
+                const canAfford = totalGold >= b.cost;
+                return (
+                  <div key={b.type} className="p-3 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between group">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">{b.icon}</span>
+                      <div>
+                        <div className="text-white font-bold text-[13px]">{b.name}</div>
+                        <div className="text-[10px] text-zinc-500">{b.cost.toLocaleString()} G • <span className="text-emerald-500">+{b.yield}/h</span></div>
                       </div>
                     </div>
                     <button 
                       onClick={() => build(b.type, b.cost)}
-                      disabled={!isOwnAccount || loading || totalGold < b.cost}
-                      className="p-1.5 border border-green-500/50 text-green-500 text-[9px] font-black hover:bg-green-500 hover:text-black disabled:opacity-10 uppercase transition-colors"
-                    >
-                      {totalGold >= b.cost ? 'Build' : 'No Gold'}
-                    </button>
+                      disabled={!isOwnAccount || loading || !canAfford}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${canAfford ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'}`}
+                    >Buy</button>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-black/70 border border-red-900/20 p-4 space-y-3">
-              <h3 className="text-red-600 font-bold text-xs uppercase mb-2">WITHDRAWAL_TERMINAL</h3>
-              <div className="space-y-4">
-                <div className="bg-black/40 border border-red-900/10 p-2 text-center">
-                  <div className="text-[9px] text-red-900 font-bold uppercase mb-1">ALL_AVAILABLE_GEMS</div>
-                  <div className="text-xl font-black text-cyan-400">{totalGems.toLocaleString()}</div>
-                  <div className="text-[8px] text-cyan-900/50 mt-1 uppercase italic tracking-tighter">Syncing Real-time Yield...</div>
-                </div>
-                
-                <button 
-                  onClick={withdrawAllGems} 
-                  disabled={!isOwnAccount || loading || totalGems <= 0}
-                  className="w-full py-3 bg-red-900/10 border border-red-500/40 text-red-500 font-bold text-[11px] uppercase hover:bg-red-500 hover:text-black transition-all disabled:opacity-20 active:scale-95"
-                >
-                  WITHDRAW ALL TO BNB
-                </button>
-                <p className="text-[8px] text-red-900/60 uppercase italic text-center leading-tight">
-                  Notice: All gems in your vault and accumulated yield will be converted to BNB and sent to your address.
-                </p>
-              </div>
+                );
+              })}
             </div>
           </div>
 
-          {/* RIGHT: COMPACT INFRASTRUCTURE TABLE */}
-          <div className="lg:col-span-8">
-            <div className="bg-black/70 border border-green-900/30 p-4 h-full flex flex-col">
-              <div className="flex justify-between items-center mb-3 border-b border-green-900/20 pb-2">
-                <h2 className="text-green-500 font-bold text-xs uppercase tracking-widest">SECTOR_OVERVIEW</h2>
-                <span className="text-[10px] text-green-900 font-bold uppercase">{activeBuildings.length}/360 ACTIVE</span>
-              </div>
-
-              <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar max-h-[580px]">
-                <div className="space-y-1.5">
-                  {activeBuildings.length > 0 ? activeBuildings.map((b) => {
-                    const baseStats = BUILDING_TYPES.find(t => t.type === b.baseType) || BUILDING_TYPES[0];
-                    const upCost = baseStats.cost / 4;
-                    const upYield = baseStats.yield / 4;
-                    const curYield = baseStats.yield + (upYield * b.upgrades);
-                    const nextYield = curYield + upYield;
-                    const isMax = b.upgrades >= 9;
-                    const canAfford = totalGold >= upCost;
-                    
-                    return (
-                      <div key={b.id} className="p-2 bg-green-900/5 border border-green-900/10 hover:border-green-500/30 flex items-center justify-between group transition-all text-[11px]">
-                        <div className="flex items-center gap-4 flex-1">
-                          <span className="text-[9px] text-green-900 font-black w-8">#{b.id}</span>
-                          <div className="flex flex-col w-24">
-                             <span className="text-green-400 font-black leading-none uppercase truncate">{baseStats.name}</span>
-                             <span className="text-[8px] text-green-800 mt-0.5">TYPE_{b.baseType}</span>
-                          </div>
-                          <div className="flex flex-col w-12 text-center">
-                             <span className="text-green-500 font-black">LVL {b.displayLevel}</span>
-                             <span className="text-[8px] text-green-900">{b.upgrades} UPGR</span>
-                          </div>
-                          <div className="flex flex-col flex-1 pl-4">
-                             <div className="flex items-center gap-1.5">
-                                <span className="text-yellow-600 font-bold">{curYield}</span>
-                                {!isMax && (
-                                  <>
-                                    <span className="text-green-900 text-[8px] tracking-tighter">→</span>
-                                    <span className="text-green-400 font-bold">{nextYield}</span>
-                                  </>
-                                )}
-                                <span className="text-[8px] text-yellow-700/50 ml-1">G/H</span>
-                             </div>
-                             <span className="text-[8px] text-green-900 uppercase">Yield Cycle</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center min-w-[120px] justify-end">
-                          {!isMax ? (
-                            <button 
-                              onClick={() => executeTx('upgradeBuilding', [b.id])}
-                              disabled={!isOwnAccount || loading || !canAfford}
-                              className={`px-3 py-1.5 border text-[9px] font-black uppercase transition-all ${
-                                canAfford 
-                                ? 'border-green-500 text-green-500 hover:bg-green-500 hover:text-black' 
-                                : 'border-red-600 text-red-600/40 cursor-not-allowed'
-                              }`}
-                            >
-                              {canAfford ? `UPGR [${upCost.toLocaleString()}]` : `NEED ${upCost.toLocaleString()} G`}
-                            </button>
-                          ) : (
-                            <span className="text-[9px] text-green-900 opacity-30 uppercase italic px-3">MAX_RANK</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }) : (
-                    <div className="h-40 flex flex-col items-center justify-center opacity-20 border border-dashed border-green-900/20">
-                      <span className="text-[10px] uppercase italic">Scanner: No active structures in grid.</span>
-                    </div>
-                  )}
-                </div>
-              </div>
+          {/* PAYOUT: Fixed Height */}
+          <div className="apple-dark-card p-6 h-[260px] border-indigo-500/10 bg-indigo-500/5 flex flex-col justify-between">
+            <h3 className="text-[11px] font-bold text-indigo-400 uppercase tracking-[0.2em] mb-2">Liquidation_Hub</h3>
+            <div className="bg-black/40 p-5 rounded-xl text-center border border-white/5">
+              <span className="block text-zinc-600 text-[9px] font-bold uppercase mb-1">Staged Gems</span>
+              <span className="text-3xl font-black text-white tabular-nums">{totalGems.toLocaleString()}</span>
+              <span className="block text-[10px] text-indigo-500 font-bold mt-1">Value: {((totalGems / 25) * 0.00001 * bnbPrice).toFixed(3)} USD</span>
             </div>
+            <button 
+              onClick={withdrawAll}
+              disabled={loading || totalGems <= 0}
+              className={`w-full py-4 rounded-xl font-bold text-[12px] ${totalGems > 0 ? 'bg-indigo-600 text-white hover:bg-indigo-500' : 'bg-zinc-800 text-zinc-700 cursor-not-allowed'}`}
+            >EXECUTE WITHDRAWAL</button>
           </div>
         </div>
 
-        {/* COMPACT BATTLE WITH REWARDS */}
-        <section className="bg-red-950/5 border border-red-900/20 p-5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 bg-red-600 text-black text-[8px] px-2 font-black uppercase tracking-tighter">COMBAT_LINK</div>
-          <div className="flex flex-col md:flex-row items-center gap-6">
-            <div className="flex-1 w-full space-y-4">
-              <div className="flex justify-between items-end">
-                <div>
-                  <h3 className="text-red-600 font-black text-xl tracking-tighter uppercase italic mb-1">STRIKE_UNIT</h3>
-                  <p className="text-[9px] text-red-900 font-bold uppercase">Authorize gold extraction protocol (40% - 60% range).</p>
-                </div>
-                <div className="text-right flex gap-4">
-                  <div className="flex flex-col">
-                    <span className="text-[8px] text-green-900 font-black uppercase">Win Projection</span>
-                    <span className="text-green-500 font-black text-sm">+{potentialReward.toLocaleString()} G</span>
+        {/* RIGHT COLUMN: INFRASTRUCTURE & COMBAT */}
+        <div className="lg:col-span-8 flex flex-col gap-4">
+          {/* INFRASTRUCTURE: Fixed Height matches Shop */}
+          <div className="apple-dark-card p-6 h-[460px] flex flex-col">
+            <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
+              <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Deployment_Sector</h2>
+              <span className="text-[10px] text-zinc-600">Active: {activeBuildings.length}/360</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar h-[360px]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {activeBuildings.length > 0 ? activeBuildings.map((b) => {
+                  const baseStats = BUILDING_TYPES.find(t => t.type === b.baseType) || BUILDING_TYPES[0];
+                  const upCost = baseStats.cost / 4;
+                  const curYield = baseStats.yield + ((baseStats.yield / 4) * b.upgrades);
+                  const isMax = b.upgrades >= 9;
+                  const canAfford = totalGold >= upCost;
+                  
+                  return (
+                    <div key={b.id} className="p-3 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-black flex items-center justify-center text-xl border border-white/5">{baseStats.icon}</div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-white font-bold text-[13px]">{baseStats.name}</span>
+                            <span className="text-[8px] bg-zinc-800 text-zinc-400 px-1 rounded font-bold">L{b.displayLevel}</span>
+                          </div>
+                          <div className="text-[10px] text-zinc-500">ID:{b.id} • {curYield}/h</div>
+                        </div>
+                      </div>
+                      {!isMax ? (
+                        <button 
+                          onClick={() => executeTx('upgradeBuilding', [b.id])}
+                          disabled={!isOwnAccount || loading || !canAfford}
+                          className={`px-3 py-1.5 rounded-lg text-[9px] font-bold ${canAfford ? 'bg-zinc-100 text-black' : 'bg-zinc-800 text-zinc-600'}`}
+                        >UP {upCost.toLocaleString()}</button>
+                      ) : (
+                        <span className="text-[8px] text-zinc-600 font-bold">MAX</span>
+                      )}
+                    </div>
+                  );
+                }) : (
+                  <div className="col-span-full h-full flex flex-col items-center justify-center opacity-30 mt-12">
+                    <span className="text-3xl mb-2">🏗️</span>
+                    <p className="text-[10px] font-bold uppercase">Awaiting construction</p>
                   </div>
-                  <div className="flex flex-col border-l border-red-900/20 pl-4">
-                    <span className="text-[8px] text-red-900 font-black uppercase">Loss Exposure</span>
-                    <span className="text-red-500 font-black text-sm">-{potentialLoss.toLocaleString()} G</span>
-                  </div>
-                </div>
+                )}
               </div>
-              
-              <div className="flex items-center gap-4">
+            </div>
+          </div>
+
+          {/* COMBAT: Fixed Height matches Payout */}
+          <div className="apple-dark-card p-6 h-[260px] flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-2">
+               <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Tactical_Combat</h2>
+               <div className="flex gap-4">
+                  <span className="text-[10px] text-emerald-500 font-bold uppercase">WIN +{potentialReward.toLocaleString()}G</span>
+                  <span className="text-[10px] text-red-500 font-bold uppercase">LOSS -{potentialLoss.toLocaleString()}G</span>
+               </div>
+            </div>
+
+            <div className="flex items-center gap-6 bg-black/30 p-4 rounded-xl border border-white/5">
+              <div className="flex-1 flex flex-col gap-3">
+                <div className="flex justify-between text-[8px] font-black text-zinc-600 uppercase">
+                  <span>Standard</span>
+                  <span>High Risk</span>
+                </div>
                 <input 
                   type="range" min="40" max="60" value={winChance} 
                   onChange={e => setWinChance(e.target.value)} 
-                  className="flex-1 accent-red-600 h-1 bg-red-950 rounded-full cursor-pointer" 
+                  className="w-full h-1.5 rounded-full appearance-none cursor-pointer" 
                 />
-                <div className="bg-red-600 text-black px-3 py-1 text-center font-black min-w-[60px]">
-                   <span className="text-lg leading-none">{winChance}%</span>
-                </div>
+              </div>
+              <div className="w-20 h-20 bg-white text-black rounded-xl flex flex-col items-center justify-center shrink-0">
+                <span className="text-[9px] font-bold uppercase opacity-60">Chance</span>
+                <span className="text-2xl font-black">{winChance}%</span>
               </div>
             </div>
-            
+
             <button 
               onClick={() => executeTx('battle', [parseInt(winChance)])}
               disabled={!isOwnAccount || loading || (kingdom?.perHour === 0)}
-              className="w-full md:w-64 py-6 bg-red-600 text-black font-black text-xl uppercase hover:bg-red-500 transition-all shadow-[0_0_20px_rgba(255,0,0,0.2)] disabled:opacity-10 active:scale-95"
-            >
-              EXECUTE STRIKE
-            </button>
+              className={`w-full py-4 rounded-xl font-black text-lg ${loading || (kingdom?.perHour === 0) ? 'bg-zinc-800 text-zinc-700' : 'bg-white text-black hover:bg-zinc-200'}`}
+            >ENGAGE BATTLE</button>
           </div>
-        </section>
-
-        <StatusLog logs={logs} />
-        
-        <footer className="py-4 text-center text-green-950 font-mono text-[8px] uppercase tracking-[0.5em] opacity-40">
-           [SCAN_OK] // [SYS_V5] // {new Date().toLocaleTimeString()}
-        </footer>
+        </div>
       </div>
+
+      <StatusLog logs={logs} />
+      
+      <footer className="mt-2 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-[0.3em] pb-2">
+         Dashboard v5.4 // BSC Verified
+      </footer>
     </div>
   );
 }

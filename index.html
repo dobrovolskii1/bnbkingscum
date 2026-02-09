@@ -1,41 +1,52 @@
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BSC Kingdom Commander</title>
+    <title>Kingdom Commander — Dark Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body {
-            font-family: 'Fira+Code', monospace;
-            background-color: #000;
-            color: #00ff00;
-            overflow-x: hidden;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: #000000;
+            color: #ffffff;
+            -webkit-font-smoothing: antialiased;
         }
-        .glow-green {
-            box-shadow: 0 0 15px rgba(0, 255, 0, 0.4);
+        .apple-dark-card {
+            background: #1c1c1e;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 28px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
-        .hacker-border {
-            border: 1px solid #00ff00;
+        .apple-dark-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+            background: #242426;
         }
-        .matrix-bg {
-            background: linear-gradient(rgba(0, 20, 0, 0.9), rgba(0, 5, 0, 0.95));
-            min-height: 100vh;
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
         }
-        ::-webkit-scrollbar {
-            width: 8px;
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
         }
-        ::-webkit-scrollbar-track {
-            background: #000;
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #3a3a3c;
+            border-radius: 10px;
         }
-        ::-webkit-scrollbar-thumb {
-            background: #004400;
-            border-radius: 4px;
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: #3a3a3c;
+            border-radius: 10px;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #00ff00;
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #ffffff;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
         }
     </style>
 <script type="importmap">
