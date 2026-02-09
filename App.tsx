@@ -158,6 +158,12 @@ export default function App() {
     return { id, raw, baseType, upgrades, displayLevel };
   }).filter(b => b.raw > 0) || [];
 
+  // Battle reward calculation
+  const dailyYield = (kingdom?.perHour || 0) * 24;
+  const chanceNum = parseInt(winChance);
+  const potentialReward = Math.floor(dailyYield * (chanceNum / 100) * 1.5);
+  const potentialLoss = Math.floor(dailyYield * 0.5);
+
   return (
     <div className="min-h-screen matrix-bg text-green-500 font-mono p-3 md:p-5 selection:bg-green-500 selection:text-black">
       <div className="max-w-6xl mx-auto space-y-4">
@@ -230,9 +236,9 @@ export default function App() {
                     <button 
                       onClick={() => build(b.type, b.cost)}
                       disabled={!isOwnAccount || loading || totalGold < b.cost}
-                      className="p-1.5 border border-green-500/50 text-green-500 text-[9px] font-black hover:bg-green-500 hover:text-black disabled:opacity-10 uppercase"
+                      className="p-1.5 border border-green-500/50 text-green-500 text-[9px] font-black hover:bg-green-500 hover:text-black disabled:opacity-10 uppercase transition-colors"
                     >
-                      Build
+                      {totalGold >= b.cost ? 'Build' : 'No Gold'}
                     </button>
                   </div>
                 ))}
@@ -273,14 +279,16 @@ export default function App() {
                     const upCost = baseStats.cost / 4;
                     const upYield = baseStats.yield / 4;
                     const curYield = baseStats.yield + (upYield * b.upgrades);
+                    const nextYield = curYield + upYield;
                     const isMax = b.upgrades >= 9;
+                    const canAfford = totalGold >= upCost;
                     
                     return (
                       <div key={b.id} className="p-2 bg-green-900/5 border border-green-900/10 hover:border-green-500/30 flex items-center justify-between group transition-all text-[11px]">
                         <div className="flex items-center gap-4 flex-1">
                           <span className="text-[9px] text-green-900 font-black w-8">#{b.id}</span>
-                          <div className="flex flex-col w-20">
-                             <span className="text-green-400 font-black leading-none uppercase">{baseStats.name}</span>
+                          <div className="flex flex-col w-24">
+                             <span className="text-green-400 font-black leading-none uppercase truncate">{baseStats.name}</span>
                              <span className="text-[8px] text-green-800 mt-0.5">TYPE_{b.baseType}</span>
                           </div>
                           <div className="flex flex-col w-12 text-center">
@@ -288,23 +296,32 @@ export default function App() {
                              <span className="text-[8px] text-green-900">{b.upgrades} UPGR</span>
                           </div>
                           <div className="flex flex-col flex-1 pl-4">
-                             <span className="text-yellow-600 font-bold">{curYield} G/H</span>
+                             <div className="flex items-center gap-1.5">
+                                <span className="text-yellow-600 font-bold">{curYield}</span>
+                                {!isMax && (
+                                  <>
+                                    <span className="text-green-900 text-[8px] tracking-tighter">→</span>
+                                    <span className="text-green-400 font-bold">{nextYield}</span>
+                                  </>
+                                )}
+                                <span className="text-[8px] text-yellow-700/50 ml-1">G/H</span>
+                             </div>
                              <span className="text-[8px] text-green-900 uppercase">Yield Cycle</span>
                           </div>
                         </div>
 
-                        <div className="flex items-center">
+                        <div className="flex items-center min-w-[120px] justify-end">
                           {!isMax ? (
                             <button 
                               onClick={() => executeTx('upgradeBuilding', [b.id])}
-                              disabled={!isOwnAccount || loading || totalGold < upCost}
+                              disabled={!isOwnAccount || loading || !canAfford}
                               className={`px-3 py-1.5 border text-[9px] font-black uppercase transition-all ${
-                                totalGold >= upCost 
+                                canAfford 
                                 ? 'border-green-500 text-green-500 hover:bg-green-500 hover:text-black' 
-                                : 'border-red-900/30 text-red-900/30 cursor-not-allowed opacity-30'
+                                : 'border-red-600 text-red-600/40 cursor-not-allowed'
                               }`}
                             >
-                              UPGR [{upCost.toLocaleString()}]
+                              {canAfford ? `UPGR [${upCost.toLocaleString()}]` : `NEED ${upCost.toLocaleString()} G`}
                             </button>
                           ) : (
                             <span className="text-[9px] text-green-900 opacity-30 uppercase italic px-3">MAX_RANK</span>
@@ -323,13 +340,27 @@ export default function App() {
           </div>
         </div>
 
-        {/* COMPACT BATTLE */}
+        {/* COMPACT BATTLE WITH REWARDS */}
         <section className="bg-red-950/5 border border-red-900/20 p-5 relative overflow-hidden">
           <div className="absolute top-0 right-0 bg-red-600 text-black text-[8px] px-2 font-black uppercase tracking-tighter">COMBAT_LINK</div>
           <div className="flex flex-col md:flex-row items-center gap-6">
-            <div className="flex-1 w-full">
-              <h3 className="text-red-600 font-black text-xl tracking-tighter uppercase italic mb-1">STRIKE_UNIT</h3>
-              <p className="text-[9px] text-red-900 font-bold uppercase mb-3">Authorize gold extraction protocol (40% - 60% range).</p>
+            <div className="flex-1 w-full space-y-4">
+              <div className="flex justify-between items-end">
+                <div>
+                  <h3 className="text-red-600 font-black text-xl tracking-tighter uppercase italic mb-1">STRIKE_UNIT</h3>
+                  <p className="text-[9px] text-red-900 font-bold uppercase">Authorize gold extraction protocol (40% - 60% range).</p>
+                </div>
+                <div className="text-right flex gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-[8px] text-green-900 font-black uppercase">Win Projection</span>
+                    <span className="text-green-500 font-black text-sm">+{potentialReward.toLocaleString()} G</span>
+                  </div>
+                  <div className="flex flex-col border-l border-red-900/20 pl-4">
+                    <span className="text-[8px] text-red-900 font-black uppercase">Loss Exposure</span>
+                    <span className="text-red-500 font-black text-sm">-{potentialLoss.toLocaleString()} G</span>
+                  </div>
+                </div>
+              </div>
               
               <div className="flex items-center gap-4">
                 <input 
@@ -337,7 +368,7 @@ export default function App() {
                   onChange={e => setWinChance(e.target.value)} 
                   className="flex-1 accent-red-600 h-1 bg-red-950 rounded-full cursor-pointer" 
                 />
-                <div className="bg-red-600 text-black px-3 py-1 text-center font-black">
+                <div className="bg-red-600 text-black px-3 py-1 text-center font-black min-w-[60px]">
                    <span className="text-lg leading-none">{winChance}%</span>
                 </div>
               </div>
@@ -346,7 +377,7 @@ export default function App() {
             <button 
               onClick={() => executeTx('battle', [parseInt(winChance)])}
               disabled={!isOwnAccount || loading || (kingdom?.perHour === 0)}
-              className="w-full md:w-64 py-6 bg-red-600 text-black font-black text-xl uppercase hover:bg-red-500 transition-all shadow-[0_0_20px_rgba(255,0,0,0.2)] disabled:opacity-10"
+              className="w-full md:w-64 py-6 bg-red-600 text-black font-black text-xl uppercase hover:bg-red-500 transition-all shadow-[0_0_20px_rgba(255,0,0,0.2)] disabled:opacity-10 active:scale-95"
             >
               EXECUTE STRIKE
             </button>
