@@ -1,5 +1,6 @@
+
 {
   "name": "BSC Kingdom Commander",
-  "description": "A hacker-style interface for interacting with the Kingdom smart contract on BSC. Manage your gold, gems, and battles with ease.",
+  "description": "Интерфейс в стиле хакера для взаимодействия со смарт-контрактом Kingdom в сети BSC. Управляйте золотом, гемами и битвами с легкостью.",
   "requestFramePermissions": []
 }

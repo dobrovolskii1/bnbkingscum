@@ -11,14 +11,14 @@ declare global {
 }
 
 const BUILDING_TYPES = [
-  { type: 1, name: "Sentry", cost: 10000, yield: 8, icon: "🏰" },
-  { type: 2, name: "Outpost", cost: 28000, yield: 24, icon: "⚔️" },
-  { type: 3, name: "Fort", cost: 54000, yield: 48, icon: "🛡️" },
-  { type: 4, name: "Citadel", cost: 100000, yield: 96, icon: "🏛️" },
-  { type: 5, name: "Stronghold", cost: 250000, yield: 248, icon: "🏯" },
-  { type: 6, name: "Bastion", cost: 500000, yield: 520, icon: "⚒️" },
-  { type: 7, name: "Capital", cost: 1000000, yield: 1100, icon: "👑" },
-  { type: 8, name: "Core", cost: 2000000, yield: 2300, icon: "💎" },
+  { type: 1, name: "Пост", cost: 10000, yield: 8, icon: "🏰" },
+  { type: 2, name: "Фортпост", cost: 28000, yield: 24, icon: "⚔️" },
+  { type: 3, name: "Крепость", cost: 54000, yield: 48, icon: "🛡️" },
+  { type: 4, name: "Цитадель", cost: 100000, yield: 96, icon: "🏛️" },
+  { type: 5, name: "Оплот", cost: 250000, yield: 248, icon: "🏯" },
+  { type: 6, name: "Бастион", cost: 500000, yield: 520, icon: "⚒️" },
+  { type: 7, name: "Столица", cost: 1000000, yield: 1100, icon: "👑" },
+  { type: 8, name: "Ядро", cost: 2000000, yield: 2300, icon: "💎" },
 ];
 
 const EXIT_HORIZON_HOURS = 30 * 24; 
@@ -30,7 +30,7 @@ const StatusLog: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
   return (
     <div className="apple-dark-card p-4 h-[100px] overflow-y-auto custom-scrollbar mt-4">
-      <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 italic">Terminal_Output</h3>
+      <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 italic">Вывод_Терминала</h3>
       <div className="space-y-1">
         {logs.map((log) => (
           <div key={log.id} className="text-[11px] flex gap-3 border-b border-white/5 pb-1 items-center">
@@ -75,9 +75,9 @@ export default function App() {
       setContractBalance({
         raw: Number(bnbVal),
         bnb: Number(bnbVal).toFixed(2),
-        usd: (Number(bnbVal) * parseFloat(priceData.price)).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+        usd: (Number(bnbVal) * parseFloat(priceData.price)).toLocaleString('ru-RU', { style: 'currency', currency: 'USD' })
       });
-    } catch (err) { console.error("Global sync failed"); }
+    } catch (err) { console.error("Ошибка синхронизации"); }
   };
 
   useEffect(() => {
@@ -148,21 +148,21 @@ export default function App() {
         battleTime: Number(kd[6]),
         tiles: Array.from(kd[11]).map(t => Number(t))
       });
-    } catch (err) { addLog('Syncing data...', 'info'); }
+    } catch (err) { addLog('Синхронизация данных...', 'info'); }
   };
 
   const connectWallet = async () => {
-    if (!window.ethereum) return addLog('MetaMask not found', 'error');
+    if (!window.ethereum) return addLog('MetaMask не найден', 'error');
     try {
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       setAccount(accounts[0]);
       if (!viewAddress) setViewAddress(accounts[0]);
-      addLog('Wallet connected', 'success');
-    } catch (err) { addLog('Connection failed', 'error'); }
+      addLog('Кошелек подключен', 'success');
+    } catch (err) { addLog('Ошибка подключения', 'error'); }
   };
 
   const executeTx = async (methodName: string, params: any[], value: bigint = 0n) => {
-    if (!account) return addLog('Connect Wallet', 'error');
+    if (!account) return addLog('Подключите кошелек', 'error');
     try {
       setLoading(true);
       const provider = new BrowserProvider(window.ethereum);
@@ -172,21 +172,21 @@ export default function App() {
       }
       const signer = await provider.getSigner();
       const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-      addLog(`Calling ${methodName}...`, 'info');
+      addLog(`Выполнение ${methodName}...`, 'info');
       const tx = await contract[methodName](...params, { value });
       await tx.wait();
-      addLog(`${methodName} successful`, 'success');
+      addLog(`${methodName} успешно выполнено`, 'success');
       await refreshData(viewAddress || account);
     } catch (err: any) {
-      addLog(`Error: ${err.reason || err.message || "Failed"}`, 'error');
+      addLog(`Ошибка: ${err.reason || err.message || "Сбой"}`, 'error');
     } finally { setLoading(false); }
   };
 
   const build = (type: number, cost: number) => {
     if (!kingdom) return;
     const slot = kingdom.tiles.indexOf(0);
-    if (slot === -1) return addLog('No slots', 'error');
-    if (totalGold < cost) return addLog('Not enough gold', 'error');
+    if (slot === -1) return addLog('Нет свободных слотов', 'error');
+    if (totalGold < cost) return addLog('Недостаточно золота', 'error');
     executeTx('placeBuildings', [[slot], type]);
   };
 
@@ -203,7 +203,6 @@ export default function App() {
   const bestAction = useMemo(() => {
     if (!kingdom) return null;
     const options: any[] = [];
-    // Battle EV inclusion: +0.34 hourly multiplier for 60% win chance
     const effectiveYield = kingdom.perHour * 1.34;
 
     const evalAction = (cost: number, yieldInc: number, name: string, icon: string, type: string, payload: any) => {
@@ -242,30 +241,30 @@ export default function App() {
             <h1 className="text-xl font-black tracking-tight uppercase italic">Kingdom Commander</h1>
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
-              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">PONZI HORIZON: 30 DAYS REMAINING</span>
+              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">ГОРИЗОНТ: ОСТАЛОСЬ 30 ДНЕЙ</span>
             </div>
           </div>
         </div>
         <div className="flex gap-3 items-center">
           <div className="apple-dark-card px-4 py-2 flex items-center gap-3 border-emerald-500/10 bg-emerald-500/5">
             <div className="text-right">
-              <span className="block text-[8px] font-bold text-emerald-500 uppercase">Pool Liquidity</span>
+              <span className="block text-[8px] font-bold text-emerald-500 uppercase">Ликвидность пула</span>
               <span className="text-[14px] font-black tabular-nums text-emerald-400">{contractBalance.usd}</span>
             </div>
           </div>
           <div className="flex gap-3 items-center apple-dark-card p-1 pr-3 h-11">
-            <input type="text" placeholder="View Address..." value={viewAddress} onChange={e => setViewAddress(e.target.value)} className="bg-zinc-800/40 px-3 py-1.5 rounded-lg text-[12px] outline-none w-32 font-medium" />
-            <button onClick={connectWallet} className="bg-white text-black px-4 h-8 rounded-lg font-bold text-[11px] hover:bg-zinc-200">{account ? account.slice(0, 6) + '...' : 'Connect'}</button>
+            <input type="text" placeholder="Адрес..." value={viewAddress} onChange={e => setViewAddress(e.target.value)} className="bg-zinc-800/40 px-3 py-1.5 rounded-lg text-[12px] outline-none w-32 font-medium" />
+            <button onClick={connectWallet} className="bg-white text-black px-4 h-8 rounded-lg font-bold text-[11px] hover:bg-zinc-200">{account ? account.slice(0, 6) + '...' : 'Вход'}</button>
           </div>
         </div>
       </header>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {[
-          { label: 'Gold Balance', val: `${totalGold.toLocaleString()} G`, sub: 'In-game only', color: 'text-amber-400', icon: '🟡' },
-          { label: 'Gem Profits', val: `${totalGems.toLocaleString()} 💎`, sub: `~$${(totalGems * 0.0000004 * bnbPrice).toFixed(2)}`, color: 'text-indigo-400', icon: '💎' },
-          { label: 'Income', val: `${(kingdom?.perHour ?? 0).toLocaleString()} G/h`, sub: `+$${(kingdom?.perHour || 0 * 0.0000004 * bnbPrice).toFixed(3)}/h`, color: 'text-emerald-400', icon: '📈' },
-          { label: 'Wallet BNB', val: `${Number(balance).toFixed(4)} BNB`, sub: `BSC Mainnet`, color: 'text-white', icon: '💳' }
+          { label: 'Баланс золота', val: `${totalGold.toLocaleString()} G`, sub: 'Игровое золото', color: 'text-amber-400', icon: '🟡' },
+          { label: 'Прибыль в гемах', val: `${totalGems.toLocaleString()} 💎`, sub: `~$${(totalGems * 0.0000004 * bnbPrice).toFixed(2)}`, color: 'text-indigo-400', icon: '💎' },
+          { label: 'Доход', val: `${(kingdom?.perHour ?? 0).toLocaleString()} G/ч`, sub: 'Базовая ставка', color: 'text-emerald-400', icon: '📈' },
+          { label: 'Кошелек BNB', val: `${Number(balance).toFixed(4)} BNB`, sub: `~$${(Number(balance) * bnbPrice).toFixed(2)} USD`, color: 'text-white', icon: '💳' }
         ].map((s, i) => (
           <div key={i} className="apple-dark-card p-4 flex justify-between items-center group">
             <div>
@@ -281,50 +280,52 @@ export default function App() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">
         <div className="lg:col-span-4 flex flex-col gap-4">
           <div className="apple-dark-card p-6 h-[460px] flex flex-col">
-            <h2 className="text-[11px] font-bold mb-4 text-zinc-400 uppercase tracking-[0.2em] border-b border-white/5 pb-2">Unit_Store</h2>
+            <h2 className="text-[11px] font-bold mb-4 text-zinc-400 uppercase tracking-[0.2em] border-b border-white/5 pb-2">Магазин_Построек</h2>
             <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-2">
               {BUILDING_TYPES.map(b => (
-                <div key={b.type} className="p-3 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between group">
+                <div key={b.type} className="p-3 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between group hover:border-blue-500/20 transition-colors">
                   <div className="flex items-center gap-3">
                     <span className="text-xl">{b.icon}</span>
                     <div>
                       <div className="text-white font-bold text-[13px]">{b.name}</div>
-                      <div className="text-[9px] text-emerald-500 font-bold">+{b.yield} G/h</div>
+                      <div className="text-[9px] text-emerald-500 font-bold">+{b.yield} G/ч</div>
                     </div>
                   </div>
-                  <button onClick={() => build(b.type, b.cost)} disabled={loading || totalGold < b.cost} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${totalGold >= b.cost ? 'bg-blue-600' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'}`}>Buy {b.cost/1000}k</button>
+                  <button onClick={() => build(b.type, b.cost)} disabled={loading || totalGold < b.cost} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${totalGold >= b.cost ? 'bg-blue-600' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'}`}>Купить {b.cost/1000}k</button>
                 </div>
               ))}
             </div>
           </div>
           <div className="apple-dark-card p-6 h-[260px] border-indigo-500/10 bg-indigo-500/5 flex flex-col justify-between">
-            <h3 className="text-[11px] font-bold text-indigo-400 uppercase tracking-[0.2em]">Extraction_Center</h3>
+            <h3 className="text-[11px] font-bold text-indigo-400 uppercase tracking-[0.2em]">Центр_Экстракции</h3>
             <div className="bg-black/40 p-5 rounded-xl text-center border border-white/5">
               <span className="text-3xl font-black text-white tabular-nums block">{totalGems.toLocaleString()} 💎</span>
               <span className="text-indigo-400 font-black text-lg tabular-nums mt-1">${(totalGems * 0.0000004 * bnbPrice).toFixed(2)}</span>
             </div>
-            <button onClick={() => executeTx('sellGems', [totalGems])} disabled={loading || totalGems === 0} className="w-full py-4 rounded-xl bg-indigo-600 text-white font-bold text-[12px] shadow-lg shadow-indigo-500/20 hover:bg-indigo-500">WITHDRAW TO BNB</button>
+            <button onClick={() => executeTx('sellGems', [totalGems])} disabled={loading || totalGems === 0} className="w-full py-4 rounded-xl bg-indigo-600 text-white font-bold text-[12px] shadow-lg shadow-indigo-500/20 hover:bg-indigo-500">ВЫВЕСТИ В BNB</button>
           </div>
         </div>
 
         <div className="lg:col-span-8 flex flex-col gap-4">
           <div className="apple-dark-card p-6 h-[460px] flex flex-col">
-            <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em] border-b border-white/5 pb-2 mb-4">Tactical_Infrastructure</h2>
+            <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em] border-b border-white/5 pb-2 mb-4">Тактическая_Инфраструктура</h2>
             
             {bestAction && bestAction.type !== 'STOP' && (
               <div className="mb-4 p-4 rounded-2xl bg-gradient-to-r from-zinc-900 to-black border border-blue-500/30 flex items-center justify-between">
                 <div className="flex gap-4 items-center">
                   <span className="text-2xl animate-pulse">💡</span>
                   <div>
-                    <div className="text-[9px] font-black text-blue-500 uppercase tracking-widest">STRATEGIC ADVISOR</div>
-                    <div className="text-white font-bold text-[15px]">Target: {bestAction.name} {bestAction.icon}</div>
+                    <div className="text-[9px] font-black text-blue-500 uppercase tracking-widest">СТРАТЕГИЧЕСКИЙ СОВЕТНИК</div>
+                    <div className="text-white font-bold text-[15px]">Далее: {bestAction.name} {bestAction.icon}</div>
                     <div className="text-[10px] text-zinc-400 flex gap-4 mt-1">
-                      <span>Profit: <span className="text-emerald-400">+{Math.floor(bestAction.totalGems).toLocaleString()} 💎</span></span>
-                      <span>Eta: <span className="text-amber-500">{bestAction.hoursToSave <= 0 ? 'READY' : `${Math.ceil(bestAction.hoursToSave)}h`}</span></span>
+                      <span>Прогноз: <span className="text-emerald-400">+{Math.floor(bestAction.totalGems).toLocaleString()} 💎</span></span>
+                      <span>Готовность: <span className="text-amber-500">{bestAction.hoursToSave <= 0 ? 'СЕЙЧАС' : `${Math.ceil(bestAction.hoursToSave)}ч`}</span></span>
                     </div>
                   </div>
                 </div>
-                <button onClick={() => bestAction.type === 'BUY' ? build(bestAction.payload[0], bestAction.cost) : executeTx('upgradeBuilding', [bestAction.payload[0]])} disabled={totalGold < bestAction.cost} className={`px-6 py-2 rounded-xl font-black text-[11px] uppercase transition-all ${totalGold >= bestAction.cost ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-600'}`}>Execute</button>
+                <button onClick={() => bestAction.type === 'BUY' ? build(bestAction.payload[0], bestAction.cost) : executeTx('upgradeBuilding', [bestAction.payload[0]])} disabled={totalGold < (bestAction.cost || 0)} className={`px-6 py-2 rounded-xl font-black text-[11px] uppercase transition-all ${totalGold >= (bestAction.cost || 0) ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-600'}`}>
+                  {totalGold >= (bestAction.cost || 0) ? 'Выполнить' : `Ждать ${Math.ceil(bestAction.hoursToSave)}ч`}
+                </button>
               </div>
             )}
 
@@ -334,18 +335,18 @@ export default function App() {
                   const base = BUILDING_TYPES.find(t => t.type === b.baseType) || BUILDING_TYPES[0];
                   const upCost = base.cost / 4;
                   return (
-                    <div key={b.id} className="p-4 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between">
+                    <div key={b.id} className="p-4 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between group hover:border-white/20 transition-all">
                       <div className="flex items-center gap-3">
                         <span className="text-xl">{base.icon}</span>
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-white font-bold text-[13px]">{base.name}</span>
-                            <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-black uppercase">LVL {b.level}</span>
+                            <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-black uppercase">Ур. {b.level}</span>
                           </div>
                         </div>
                       </div>
                       {b.level < 10 && (
-                        <button onClick={() => executeTx('upgradeBuilding', [b.id])} disabled={totalGold < upCost} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${totalGold >= upCost ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-700'}`}>UP {upCost/1000}k</button>
+                        <button onClick={() => executeTx('upgradeBuilding', [b.id])} disabled={totalGold < upCost} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${totalGold >= upCost ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-700'}`}>Улучшить {upCost/1000}k</button>
                       )}
                     </div>
                   );
@@ -354,25 +355,28 @@ export default function App() {
             </div>
           </div>
 
-          <div className="apple-dark-card p-6 h-[260px] flex flex-col justify-between border-red-500/10">
-            <div className="flex justify-between items-center">
-              <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Tactical_Combat_Simulation</h2>
+          <div className="apple-dark-card p-6 h-[260px] flex flex-col justify-between border-red-500/10 hover:border-red-500/20 transition-colors">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Боевая_Арена</h2>
               <div className="text-right">
-                <div className="text-[10px] text-emerald-500 font-bold uppercase">WIN: +{potentialReward.toLocaleString()} G</div>
-                <div className="text-[10px] text-red-500 font-bold uppercase">LOSS: -{potentialLoss.toLocaleString()} G</div>
+                <div className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider">ПОБЕДА: +{potentialReward.toLocaleString()} G</div>
+                <div className="text-[10px] text-red-500 font-bold uppercase tracking-wider">ПОРАЖЕНИЕ: -{potentialLoss.toLocaleString()} G</div>
               </div>
             </div>
             <div className="bg-black/30 p-4 rounded-xl border border-white/5 flex items-center gap-6">
               <input type="range" min="40" max="60" value={winChance} onChange={e => setWinChance(e.target.value)} className="flex-1 h-1.5" />
-              <div className="w-16 h-16 bg-white text-black rounded-xl flex flex-col items-center justify-center shrink-0">
-                <span className="text-[9px] font-bold uppercase opacity-60">Chance</span>
+              <div className="w-16 h-16 bg-white text-black rounded-xl flex flex-col items-center justify-center shrink-0 shadow-lg">
+                <span className="text-[9px] font-bold uppercase opacity-60">Шанс</span>
                 <span className="text-xl font-black">{winChance}%</span>
               </div>
             </div>
             <div className="relative">
-              {battleCooldownStr && <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-red-500 text-white text-[10px] font-black px-3 py-1 rounded-full animate-bounce uppercase">COOLDOWN: {battleCooldownStr}</div>}
-              <button onClick={() => executeTx('battle', [parseInt(winChance)])} disabled={!isBattleReady || kingdom?.perHour === 0} className={`w-full py-4 rounded-xl font-black text-lg ${isBattleReady && kingdom?.perHour! > 0 ? 'bg-white text-black hover:bg-zinc-200' : 'bg-zinc-800 text-zinc-700'}`}>
-                {isBattleReady ? 'LAUNCH ATTACK' : `WAIT ${battleCooldownStr}`}
+              <button 
+                onClick={() => executeTx('battle', [parseInt(winChance)])} 
+                disabled={!isBattleReady || (kingdom?.perHour || 0) === 0 || loading} 
+                className={`w-full py-4 rounded-xl font-black text-lg transition-all ${isBattleReady && (kingdom?.perHour || 0) > 0 ? 'bg-white text-black hover:scale-[1.01]' : 'bg-zinc-800 text-zinc-700 cursor-not-allowed'}`}
+              >
+                {isBattleReady ? 'НАЧАТЬ АТАКУ' : `ПЕРЕЗАРЯДКА: ${battleCooldownStr}`}
               </button>
             </div>
           </div>
