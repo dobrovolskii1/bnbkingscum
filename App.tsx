@@ -21,7 +21,7 @@ const BUILDING_TYPES = [
   { type: 8, name: "Core", cost: 2000000, yield: 2300, icon: "💎" },
 ];
 
-const REMAINING_HOURS = 30 * 24; // Примерно месяц до конца баланса
+const REMAINING_HOURS = 30 * 24; // 720 hours window before the "exit"
 
 const StatusLog: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -83,6 +83,10 @@ export default function App() {
     const interval = setInterval(fetchGlobalData, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  const gemToUsd = (gems: number) => {
+    return (gems * 0.0000004) * bnbPrice;
+  };
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -174,72 +178,83 @@ export default function App() {
   const totalGold = (kingdom?.gold || 0) + accumulated.gold;
   const totalGems = (kingdom?.gems || 0) + accumulated.gems;
 
+  // Building levels: base is level 1, each upgrade adds +1
   const activeBuildings = kingdom?.tiles.map((raw, id) => {
     const baseType = raw % 10;
     const upgrades = Math.floor(raw / 10);
-    const displayLevel = baseType + upgrades;
+    const displayLevel = 1 + upgrades; 
     return { id, raw, baseType, upgrades, displayLevel };
   }).filter(b => b.raw > 0) || [];
 
-  // ENHANCED ADVISOR LOGIC: TIME-HORIZON AWARE
   const bestAction = useMemo(() => {
     if (!kingdom) return null;
     
     const options: any[] = [];
     const slotsAvailable = kingdom.tiles.includes(0);
+    const currentYield = kingdom.perHour || 1;
 
-    // 1. Consider Buying
+    // 1. Buying new
     if (slotsAvailable) {
       BUILDING_TYPES.forEach(b => {
-        const breakevenHours = b.cost / b.yield;
-        const totalProfitByEnd = (b.yield * REMAINING_HOURS) - b.cost;
-        options.push({
-          type: 'BUY',
-          name: b.name,
-          cost: b.cost,
-          yieldInc: b.yield,
-          breakevenHours,
-          totalProfitByEnd,
-          efficiency: totalProfitByEnd / b.cost, // Приоритет на чистую выгоду к концу месяца
-          icon: b.icon,
-          payload: [b.type, b.cost]
-        });
+        const costToSave = Math.max(0, b.cost - totalGold);
+        const hoursToSave = costToSave / currentYield;
+        const productiveHours = REMAINING_HOURS - hoursToSave;
+        
+        if (productiveHours > 0) {
+          const totalProfitGemsByEnd = (b.yield * productiveHours) - b.cost;
+          if (totalProfitGemsByEnd > 0) {
+            options.push({
+              type: 'BUY',
+              name: b.name,
+              cost: b.cost,
+              yieldInc: b.yield,
+              breakevenHours: b.cost / b.yield,
+              totalProfitByEnd: totalProfitGemsByEnd,
+              hoursToSave,
+              icon: b.icon,
+              payload: [b.type, b.cost]
+            });
+          }
+        }
       });
     }
 
-    // 2. Consider Upgrading
+    // 2. Upgrading
     activeBuildings.forEach(b => {
       if (b.upgrades < 9) {
         const base = BUILDING_TYPES.find(t => t.type === b.baseType);
         if (base) {
           const upCost = base.cost / 4;
           const upYield = base.yield / 4;
-          const breakevenHours = upCost / upYield;
-          const totalProfitByEnd = (upYield * REMAINING_HOURS) - upCost;
-          options.push({
-            type: 'UPGRADE',
-            name: `${base.name} #${b.id}`,
-            cost: upCost,
-            yieldInc: upYield,
-            breakevenHours,
-            totalProfitByEnd,
-            efficiency: totalProfitByEnd / upCost,
-            icon: base.icon,
-            payload: [b.id]
-          });
+          const costToSave = Math.max(0, upCost - totalGold);
+          const hoursToSave = costToSave / currentYield;
+          const productiveHours = REMAINING_HOURS - hoursToSave;
+
+          if (productiveHours > 0) {
+            const totalProfitGemsByEnd = (upYield * productiveHours) - upCost;
+            if (totalProfitGemsByEnd > 0) {
+              options.push({
+                type: 'UPGRADE',
+                name: `${base.name} #${b.id}`,
+                cost: upCost,
+                yieldInc: upYield,
+                breakevenHours: upCost / upYield,
+                totalProfitByEnd: totalProfitGemsByEnd,
+                hoursToSave,
+                icon: base.icon,
+                payload: [b.id]
+              });
+            }
+          }
         }
       }
     });
 
-    if (options.length === 0) return null;
+    if (options.length === 0) return { type: 'STOP', name: 'Extraction Mode', totalProfitByEnd: 0, cost: 0 };
 
-    // Filter out options that don't break even (Risk management)
-    const profitableOptions = options.filter(o => o.totalProfitByEnd > 0);
-    const targetSet = profitableOptions.length > 0 ? profitableOptions : options;
-
-    // Sort by best Net Profit relative to cost (best ROI for the remaining 30 days)
-    return targetSet.sort((a, b) => b.efficiency - a.efficiency)[0];
-  }, [kingdom, activeBuildings]);
+    // Highest net profit in GEMS within 30 days
+    return options.sort((a, b) => b.totalProfitByEnd - a.totalProfitByEnd)[0];
+  }, [kingdom, activeBuildings, totalGold]);
 
   const dailyYield = (kingdom?.perHour || 0) * 24;
   const chanceNum = parseInt(winChance);
@@ -261,8 +276,8 @@ export default function App() {
           <div>
             <h1 className="text-xl font-black tracking-tight uppercase italic">Kingdom Commander</h1>
             <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Economic Cycle: 30 Days Remaining</span>
+              <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
+              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">PONZI HORIZON: 30 DAYS REMAINING</span>
             </div>
           </div>
         </div>
@@ -270,7 +285,7 @@ export default function App() {
         <div className="flex gap-3 items-center">
           <div className="apple-dark-card px-4 py-2 flex items-center gap-3 border-emerald-500/10 bg-emerald-500/5">
             <div className="text-right">
-              <span className="block text-[8px] font-bold text-emerald-500 uppercase">Pool Stability</span>
+              <span className="block text-[8px] font-bold text-emerald-500 uppercase">Pool Liquidity</span>
               <span className="text-[14px] font-black tabular-nums text-emerald-400">{contractBalance.usd}</span>
             </div>
             <div className="h-6 w-[1px] bg-emerald-500/20"></div>
@@ -279,16 +294,13 @@ export default function App() {
 
           <div className="flex gap-3 items-center apple-dark-card p-1 pr-3 h-11">
             <input 
-              type="text" 
-              placeholder="Address..."
-              value={viewAddress}
+              type="text" placeholder="Address..." value={viewAddress}
               onChange={(e) => setViewAddress(e.target.value)}
               className="bg-zinc-800/40 border-none px-3 py-1.5 rounded-lg text-[12px] outline-none w-32 font-medium"
             />
             {account ? (
               <div className="flex items-center gap-2 pl-1 border-l border-white/5">
                  <span className="text-[11px] font-bold text-zinc-400">{account.slice(0, 4)}...{account.slice(-4)}</span>
-                 <div className="w-7 h-7 bg-zinc-800 rounded-lg border border-white/5"></div>
               </div>
             ) : (
               <button onClick={connectWallet} className="bg-white text-black px-4 h-8 rounded-lg font-bold text-[11px]">Connect</button>
@@ -300,15 +312,16 @@ export default function App() {
       {/* STATS PANEL */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {[
-          { label: 'Золото', val: totalGold, color: 'text-amber-400', icon: '🟡' },
-          { label: 'Гемы', val: totalGems, color: 'text-indigo-400', icon: '💎' },
-          { label: 'Доход/час', val: kingdom?.perHour ?? 0, color: 'text-emerald-400', icon: '📈' },
-          { label: 'Баланс BNB', val: Number(balance).toFixed(4), color: 'text-white', icon: '💳' }
+          { label: 'Золото', val: `${totalGold.toLocaleString()} G`, sub: `~$${gemToUsd(totalGold).toFixed(2)}`, color: 'text-amber-400', icon: '🟡' },
+          { label: 'Гемы', val: `${totalGems.toLocaleString()} 💎`, sub: `~$${gemToUsd(totalGems).toFixed(2)}`, color: 'text-indigo-400', icon: '💎' },
+          { label: 'Доход/час', val: `${(kingdom?.perHour ?? 0).toLocaleString()} G/h`, sub: `+$${gemToUsd(kingdom?.perHour || 0).toFixed(3)}/h`, color: 'text-emerald-400', icon: '📈' },
+          { label: 'Баланс BNB', val: `${Number(balance).toFixed(4)} BNB`, sub: `$${(Number(balance) * bnbPrice).toFixed(2)}`, color: 'text-white', icon: '💳' }
         ].map((s, i) => (
           <div key={i} className="apple-dark-card p-4 flex justify-between items-center group">
             <div>
               <div className="text-[9px] font-bold text-zinc-600 uppercase mb-0.5">{s.label}</div>
-              <div className={`text-xl font-black ${s.color} tabular-nums`}>{s.val.toLocaleString()}</div>
+              <div className={`text-lg font-black ${s.color} tabular-nums`}>{s.val}</div>
+              <div className="text-[10px] text-zinc-500 font-bold tabular-nums">{s.sub}</div>
             </div>
             <span className="text-lg opacity-20">{s.icon}</span>
           </div>
@@ -317,7 +330,7 @@ export default function App() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">
         
-        {/* LEFT COLUMN: SHOP & PAYOUT */}
+        {/* LEFT COLUMN: SHOP */}
         <div className="lg:col-span-4 flex flex-col gap-4">
           <div className="apple-dark-card p-6 h-[460px] flex flex-col">
             <h2 className="text-[11px] font-bold mb-4 text-zinc-400 uppercase tracking-[0.2em] border-b border-white/5 pb-2">Unit_Store</h2>
@@ -325,18 +338,21 @@ export default function App() {
               {BUILDING_TYPES.map((b) => {
                 const canAfford = totalGold >= b.cost;
                 return (
-                  <div key={b.type} className="p-3 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between group hover:bg-zinc-900/60 transition-colors">
+                  <div key={b.type} className="p-3 rounded-xl bg-zinc-900/40 border border-white/5 flex items-center justify-between group">
                     <div className="flex items-center gap-3">
                       <span className="text-xl">{b.icon}</span>
                       <div>
                         <div className="text-white font-bold text-[13px]">{b.name}</div>
-                        <div className="text-[10px] text-zinc-500">{b.cost.toLocaleString()} G • <span className="text-emerald-500">+{b.yield}/h</span></div>
+                        <div className="text-[10px] text-zinc-500 font-mono">
+                          {b.cost.toLocaleString()} G <span className="text-zinc-700 text-[8px]">(${(b.cost * 0.0000004 * bnbPrice).toFixed(1)})</span>
+                        </div>
+                        <div className="text-[9px] text-emerald-500 font-bold">+{b.yield} G/h (~${gemToUsd(b.yield).toFixed(3)})</div>
                       </div>
                     </div>
                     <button 
                       onClick={() => build(b.type, b.cost)}
                       disabled={!isOwnAccount || loading || !canAfford}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${canAfford ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-500/20' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'}`}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${canAfford ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'}`}
                     >Buy</button>
                   </div>
                 );
@@ -345,100 +361,82 @@ export default function App() {
           </div>
 
           <div className="apple-dark-card p-6 h-[260px] border-indigo-500/10 bg-indigo-500/5 flex flex-col justify-between">
-            <h3 className="text-[11px] font-bold text-indigo-400 uppercase tracking-[0.2em] mb-2">Liquidation_Hub</h3>
+            <h3 className="text-[11px] font-bold text-indigo-400 uppercase tracking-[0.2em] mb-2">Extraction_Center</h3>
             <div className="bg-black/40 p-5 rounded-xl text-center border border-white/5">
-              <span className="block text-zinc-600 text-[9px] font-bold uppercase mb-1">Staged Gems</span>
-              <span className="text-3xl font-black text-white tabular-nums">{totalGems.toLocaleString()}</span>
-              <span className="block text-[10px] text-indigo-500 font-bold mt-1">Value: {((totalGems / 25) * 0.00001 * bnbPrice).toFixed(3)} USD</span>
+              <span className="text-3xl font-black text-white tabular-nums">{totalGems.toLocaleString()} 💎</span>
+              <div className="mt-2 flex items-center justify-center gap-2">
+                <span className="text-indigo-400 font-black text-lg tabular-nums">${gemToUsd(totalGems).toFixed(2)}</span>
+                <span className="text-[9px] text-zinc-600 uppercase font-bold">Total Liquid</span>
+              </div>
             </div>
             <button 
               onClick={withdrawAll}
               disabled={loading || totalGems <= 0}
               className={`w-full py-4 rounded-xl font-bold text-[12px] transition-all ${totalGems > 0 ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20' : 'bg-zinc-800 text-zinc-700 cursor-not-allowed'}`}
-            >EXECUTE WITHDRAWAL</button>
+            >EXECUTE EXIT STRATEGY</button>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: INFRASTRUCTURE & COMBAT */}
+        {/* RIGHT COLUMN: INFRASTRUCTURE & ADVISOR */}
         <div className="lg:col-span-8 flex flex-col gap-4">
           
           <div className="apple-dark-card p-6 h-[460px] flex flex-col">
             <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
-              <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Deployment_Sector</h2>
-              <span className="text-[10px] text-zinc-600 italic">Efficiency Analysis active</span>
+              <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Infrastructure</h2>
+              <span className="text-[10px] text-zinc-600 font-mono italic">ROI-Maximized Logic (30D)</span>
             </div>
 
-            {/* ENHANCED ADVISOR PANEL */}
+            {/* ADVISOR */}
             {bestAction && (
-              <div className="mb-4 bg-gradient-to-r from-zinc-900 to-black p-4 rounded-2xl border border-blue-500/20 relative overflow-hidden">
-                <div className="absolute top-0 right-0 h-full w-32 bg-blue-500/5 blur-3xl"></div>
-                
-                <div className="flex items-start justify-between relative z-10 mb-2">
-                  <div className="flex gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center border border-blue-500/30 shadow-inner">
-                      <span className="text-blue-400 animate-pulse text-2xl">⚡</span>
+              <div className={`mb-4 p-4 rounded-2xl border relative overflow-hidden shadow-2xl transition-all duration-500 ${bestAction.type === 'STOP' ? 'bg-red-500/5 border-red-500/20' : 'bg-gradient-to-r from-zinc-900 to-black border-blue-500/20'}`}>
+                {bestAction.type !== 'STOP' ? (
+                  <>
+                    <div className="absolute top-0 right-0 h-full w-32 bg-blue-500/5 blur-3xl"></div>
+                    <div className="flex items-start justify-between relative z-10">
+                      <div className="flex gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center border border-blue-500/30">
+                          <span className="text-blue-400 animate-pulse text-2xl">⚡</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest">STRATEGIC PONZI ADVISOR</span>
+                          <div className="text-white font-bold text-[15px] mt-0.5 leading-tight">
+                            Recommended {bestAction.type === 'BUY' ? 'Buy' : 'Upgrade'}: <span className="text-blue-400">{bestAction.name}</span> {bestAction.icon}
+                          </div>
+                          <div className="text-[10px] mt-1 text-zinc-400 flex flex-wrap gap-x-4">
+                            <span>Expected Gain: <span className="text-emerald-400 font-black">+{bestAction.totalProfitByEnd.toLocaleString()} G (~${gemToUsd(bestAction.totalProfitByEnd).toFixed(2)})</span></span>
+                            <span>ROI Breakeven: <span className="text-amber-500 font-bold">{Math.ceil(bestAction.breakevenHours)} hours</span></span>
+                            <span>Wait Time: <span className="text-zinc-500">{Math.ceil(bestAction.hoursToSave)}h to afford</span></span>
+                          </div>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => bestAction.type === 'BUY' ? build(bestAction.payload[0], bestAction.payload[1]) : executeTx('upgradeBuilding', [bestAction.payload[0]])}
+                        disabled={totalGold < bestAction.cost || loading || !isOwnAccount}
+                        className={`px-6 py-2 rounded-xl font-black text-[11px] uppercase transition-all shadow-lg ${totalGold >= bestAction.cost ? 'bg-white text-black hover:bg-zinc-200 shadow-white/10' : 'bg-zinc-800 text-zinc-600 border border-white/5 cursor-not-allowed'}`}
+                      >
+                        {totalGold >= bestAction.cost ? 'Execute Strategy' : `Wait ${Math.ceil(bestAction.hoursToSave)}h`}
+                      </button>
                     </div>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-4 py-2">
+                    <span className="text-2xl animate-bounce">🛑</span>
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Strategic Path</span>
-                        <div className="h-1 w-1 bg-zinc-700 rounded-full"></div>
-                        <span className={`text-[9px] font-bold uppercase tracking-widest ${bestAction.totalProfitByEnd > 0 ? 'text-emerald-500' : 'text-amber-500 animate-pulse'}`}>
-                          {bestAction.totalProfitByEnd > 0 ? 'Optimal Growth' : 'High Risk / Late Cycle'}
-                        </span>
-                      </div>
-                      <div className="text-white font-bold text-[14px] mt-0.5">
-                        {bestAction.type === 'BUY' ? 'New Asset:' : 'Optimization:'} {bestAction.icon} <span className="text-blue-400">{bestAction.name}</span>
-                      </div>
-                      <div className="text-[10px] text-zinc-500 mt-1">
-                        Окупаемость: <span className="text-zinc-300 font-bold">{Math.ceil(bestAction.breakevenHours)} ч.</span>
-                        <span className="mx-2">|</span>
-                        Профит к концу месяца: <span className="text-emerald-400 font-bold">+{Math.floor(bestAction.totalProfitByEnd).toLocaleString()} G</span>
-                      </div>
+                      <div className="text-[10px] font-black text-red-500 uppercase tracking-widest">EXIT WINDOW DETECTED</div>
+                      <div className="text-white font-bold text-sm">No remaining investments break even. Extract all current funds immediately!</div>
                     </div>
                   </div>
-                  
-                  <div className="text-right hidden md:block">
-                    <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">Efficiency Rating</div>
-                    <div className="px-2 py-1 rounded-md bg-zinc-800 border border-white/5 inline-block">
-                      <span className="text-blue-400 font-black text-xs">{(bestAction.efficiency * 100).toFixed(2)}% ROI</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4 relative z-10 mt-4">
-                  <div className="flex-1 flex flex-col gap-1.5">
-                    <div className="flex justify-between text-[8px] font-bold text-zinc-600 uppercase">
-                      <span>Resources Required</span>
-                      <span>{Math.min(100, (totalGold / bestAction.cost) * 100).toFixed(0)}%</span>
-                    </div>
-                    <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/5 shadow-inner">
-                      <div 
-                        className={`h-full transition-all duration-700 ease-out rounded-full ${totalGold >= bestAction.cost ? 'bg-blue-400' : 'bg-blue-600 opacity-60'}`}
-                        style={{ width: `${Math.min(100, (totalGold / bestAction.cost) * 100)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => bestAction.type === 'BUY' ? build(bestAction.payload[0], bestAction.payload[1]) : executeTx('upgradeBuilding', [bestAction.payload[0]])}
-                    disabled={totalGold < bestAction.cost || loading || !isOwnAccount}
-                    className={`px-6 py-2 rounded-xl font-black text-[11px] uppercase transition-all shadow-lg active:scale-95 ${
-                      totalGold >= bestAction.cost 
-                      ? 'bg-white text-black hover:bg-zinc-200 shadow-white/5' 
-                      : 'bg-zinc-800 text-zinc-600 border border-white/5 cursor-not-allowed'
-                    }`}
-                  >
-                    {totalGold >= bestAction.cost ? 'Execute Strategy' : 'Accumulating...'}
-                  </button>
-                </div>
+                )}
               </div>
             )}
 
             <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {activeBuildings.length > 0 ? activeBuildings.map((b) => {
+                {activeBuildings.map((b) => {
                   const baseStats = BUILDING_TYPES.find(t => t.type === b.baseType) || BUILDING_TYPES[0];
                   const upCost = baseStats.cost / 4;
                   const curYield = baseStats.yield + ((baseStats.yield / 4) * b.upgrades);
+                  const nextYield = baseStats.yield + ((baseStats.yield / 4) * (b.upgrades + 1));
                   const isMax = b.upgrades >= 9;
                   const canAfford = totalGold >= upCost;
                   const isRecommended = bestAction?.type === 'UPGRADE' && bestAction.payload[0] === b.id;
@@ -446,59 +444,53 @@ export default function App() {
                   return (
                     <div key={b.id} className={`p-3 rounded-xl bg-zinc-900/40 border flex items-center justify-between transition-all group ${isRecommended ? 'border-blue-500/40 bg-blue-500/5' : 'border-white/5 hover:border-white/10'}`}>
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-black flex items-center justify-center text-xl border border-white/5 group-hover:scale-110 transition-transform">{baseStats.icon}</div>
+                        <div className="w-10 h-10 rounded-lg bg-black flex items-center justify-center text-xl border border-white/5 shadow-lg group-hover:scale-110 transition-transform">{baseStats.icon}</div>
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-white font-bold text-[13px]">{baseStats.name}</span>
-                            <span className="text-[8px] bg-zinc-800 text-zinc-400 px-1 rounded font-bold">L{b.displayLevel}</span>
+                            <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-black">LVL {b.displayLevel}</span>
                           </div>
-                          <div className="text-[10px] text-zinc-500">ID:{b.id} • {curYield}/h</div>
+                          <div className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                            Profit: <span className="text-emerald-500 font-bold">{curYield} G/h (~${gemToUsd(curYield).toFixed(3)})</span>
+                            {!isMax && <span className="text-zinc-700 ml-1">→ {nextYield} G/h</span>}
+                          </div>
                         </div>
                       </div>
                       {!isMax ? (
                         <button 
                           onClick={() => executeTx('upgradeBuilding', [b.id])}
                           disabled={!isOwnAccount || loading || !canAfford}
-                          className={`px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all ${canAfford ? 'bg-zinc-100 text-black hover:bg-white' : 'bg-zinc-800 text-zinc-600'}`}
-                        >UP {upCost.toLocaleString()}</button>
+                          className={`px-3 py-1.5 rounded-lg text-[9px] font-bold shadow-sm transition-all ${canAfford ? 'bg-zinc-100 text-black hover:bg-white' : 'bg-zinc-800 text-zinc-600'}`}
+                        >UP {upCost.toLocaleString()} G</button>
                       ) : (
-                        <span className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest opacity-40">Max_Lvl</span>
+                        <span className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest opacity-40">MAXED</span>
                       )}
                     </div>
                   );
-                }) : (
-                  <div className="col-span-full h-full flex flex-col items-center justify-center opacity-30 mt-12">
-                    <span className="text-3xl mb-2">🏗️</span>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.2em]">Sector Offline</p>
-                  </div>
-                )}
+                })}
               </div>
             </div>
           </div>
 
-          {/* COMBAT: Fixed Height matches Payout */}
+          {/* COMBAT */}
           <div className="apple-dark-card p-6 h-[260px] flex flex-col justify-between">
             <div className="flex justify-between items-center mb-2">
-               <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Tactical_Combat</h2>
+               <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Risk_Management_Combat</h2>
                <div className="flex gap-4">
-                  <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider">Potential +{potentialReward.toLocaleString()}G</span>
-                  <span className="text-[10px] text-red-500 font-bold uppercase tracking-wider">Risk -{potentialLoss.toLocaleString()}G</span>
+                  <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider">Reward +${gemToUsd(potentialReward).toFixed(2)}</span>
+                  <span className="text-[10px] text-red-500 font-bold uppercase tracking-wider">Risk -${gemToUsd(potentialLoss).toFixed(2)}</span>
                </div>
             </div>
 
             <div className="flex items-center gap-6 bg-black/30 p-4 rounded-xl border border-white/5 shadow-inner">
               <div className="flex-1 flex flex-col gap-3">
-                <div className="flex justify-between text-[8px] font-black text-zinc-600 uppercase tracking-widest">
-                  <span>Balanced</span>
-                  <span>High Stake</span>
-                </div>
                 <input 
                   type="range" min="40" max="60" value={winChance} 
                   onChange={e => setWinChance(e.target.value)} 
                   className="w-full h-1.5 rounded-full appearance-none cursor-pointer" 
                 />
               </div>
-              <div className="w-20 h-20 bg-white text-black rounded-xl flex flex-col items-center justify-center shrink-0 shadow-xl shadow-white/5 border border-white/20">
+              <div className="w-20 h-20 bg-white text-black rounded-xl flex flex-col items-center justify-center shrink-0 shadow-xl border border-white/20">
                 <span className="text-[9px] font-bold uppercase opacity-60">Chance</span>
                 <span className="text-2xl font-black">{winChance}%</span>
               </div>
@@ -508,7 +500,7 @@ export default function App() {
               onClick={() => executeTx('battle', [parseInt(winChance)])}
               disabled={!isOwnAccount || loading || (kingdom?.perHour === 0)}
               className={`w-full py-4 rounded-xl font-black text-lg transition-all active:scale-[0.98] ${loading || (kingdom?.perHour === 0) ? 'bg-zinc-800 text-zinc-700 border border-white/5' : 'bg-white text-black hover:bg-zinc-200 shadow-lg shadow-white/5'}`}
-            >ENGAGE BATTLE</button>
+            >ENGAGE HIGH-STAKE BATTLE</button>
           </div>
         </div>
       </div>
@@ -516,7 +508,7 @@ export default function App() {
       <StatusLog logs={logs} />
       
       <footer className="mt-2 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-[0.3em] pb-2">
-         System v5.6 // Neural Strategic Grid Active // 30 Day Economic Window
+         System v5.9 // Extraction Window: {REMAINING_HOURS}h // BSC Grid Active
       </footer>
     </div>
   );
