@@ -25,8 +25,8 @@ const EXIT_HORIZON_HOURS = 30 * 24;
 const BATTLE_COOLDOWN = 86400; 
 const SAFETY_BUFFER = 5;
 const GEM_RATE = 1000000; 
-const HISTORY_KEY = 'kingdom_balance_snapshots';
-const MAX_HISTORY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const HISTORY_KEY = 'kingdom_balance_snapshots_v2';
+const MAX_HISTORY_MS = 30 * 60 * 60 * 1000; // Store up to 30h to always have a 24h point
 
 interface BalanceSnapshot {
   t: number;
@@ -38,7 +38,7 @@ const StatusLog: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
   return (
     <div className="apple-dark-card p-4 h-[100px] overflow-y-auto custom-scrollbar mt-4">
-      <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 italic">Анализатор_Потока</h3>
+      <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 italic">Анализатор_Стабильности</h3>
       <div className="space-y-1">
         {logs.map((log) => (
           <div key={log.id} className="text-[11px] flex gap-3 border-b border-white/5 pb-1 items-center">
@@ -61,6 +61,7 @@ export default function App() {
   const [contractBalance, setContractBalance] = useState<{bnb: string, usd: string, raw: number}>({bnb: '0', usd: '0', raw: 0});
   const [totalDeposited, setTotalDeposited] = useState<number>(0);
   const [dailyWithdrawals, setDailyWithdrawals] = useState<number>(0);
+  const [anchorInfo, setAnchorInfo] = useState<{time: string, bnb: number} | null>(null);
   const [historyDuration, setHistoryDuration] = useState<string>('0ч');
   const [kingdom, setKingdom] = useState<KingdomData | null>(null);
   const [accumulated, setAccumulated] = useState({ gold: 0, gems: 0 });
@@ -75,38 +76,48 @@ export default function App() {
     setLogs(prev => [...prev.slice(-15), { id: Math.random().toString(36).substr(2, 9), message, type, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }]);
   };
 
-  const calculateWithdrawalsFromHistory = (currentBnb: number) => {
+  const calculateStableOutflow = (currentBnb: number) => {
     const raw = localStorage.getItem(HISTORY_KEY);
     let history: BalanceSnapshot[] = raw ? JSON.parse(raw) : [];
     const now = Date.now();
 
     // Add current point
     history.push({ t: now, b: currentBnb });
-
-    // Filter old data (older than 24h)
+    // Filter old (keep slightly more than 24h)
     history = history.filter(s => now - s.t <= MAX_HISTORY_MS);
-
-    // Save back
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
 
-    if (history.length < 2) return { rate: 0, duration: '0ч' };
+    if (history.length < 2) return;
 
-    const oldest = history[0];
-    const newest = history[history.length - 1];
-    const timeDiffMs = newest.t - oldest.t;
-    
-    if (timeDiffMs < 60000) return { rate: 0, duration: '1м' }; // Wait at least 1 min for meaningful delta
+    // We want to find a point closest to 24 hours ago
+    const targetTime = now - (24 * 60 * 60 * 1000);
+    let anchor = history[0];
+    let minDiff = Math.abs(anchor.t - targetTime);
 
-    const bnbDiff = oldest.b - newest.b; // Positive means balance decreased (outflow)
+    for (const snap of history) {
+      const diff = Math.abs(snap.t - targetTime);
+      if (diff < minDiff) {
+        minDiff = diff;
+        anchor = snap;
+      }
+    }
+
+    const timeDiffMs = now - anchor.t;
     const hoursElapsed = timeDiffMs / (1000 * 60 * 60);
-    
-    // Normalize to 24 hours
-    const rate24h = bnbDiff > 0 ? (bnbDiff / hoursElapsed) * 24 : 0;
+    const bnbDelta = anchor.b - currentBnb; // Positive = outflow
 
-    return { 
-      rate: rate24h, 
-      duration: hoursElapsed >= 1 ? `${hoursElapsed.toFixed(1)}ч` : `${(hoursElapsed * 60).toFixed(0)}м` 
-    };
+    setAnchorInfo({
+      time: new Date(anchor.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      bnb: anchor.b
+    });
+    setHistoryDuration(`${hoursElapsed.toFixed(1)}ч`);
+
+    // Normalized 24h rate
+    // If bnbDelta is 3.81 and hoursElapsed is 10.6, rate = (3.81/10.6)*24
+    if (hoursElapsed > 0.1) {
+      const rate24h = (bnbDelta / hoursElapsed) * 24;
+      setDailyWithdrawals(rate24h > 0 ? rate24h : 0);
+    }
   };
 
   const fetchGlobalData = async () => {
@@ -131,26 +142,17 @@ export default function App() {
         usd: (bnbVal * currentPrice).toLocaleString('ru-RU', { style: 'currency', currency: 'USD' })
       });
 
-      // Calculate withdrawal rate based on balance history
-      const { rate, duration } = calculateWithdrawalsFromHistory(bnbVal);
-      setDailyWithdrawals(rate);
-      setHistoryDuration(duration);
-
-      if (rate > 0) {
-        addLog(`Тренд: -${rate.toFixed(3)} BNB в сутки (база: ${duration})`, 'info');
-      } else {
-        addLog(`Тренд: Баланс стабилен или растет (база: ${duration})`, 'success');
-      }
+      calculateStableOutflow(bnbVal);
 
     } catch (err) { 
-      console.error("Data fetch error", err);
-      addLog("Ошибка синхронизации сети", "error");
+      console.error("Global Data Error", err);
+      addLog("Сбой сети BSC", "error");
     }
   };
 
   useEffect(() => {
     fetchGlobalData();
-    const interval = setInterval(fetchGlobalData, 45000);
+    const interval = setInterval(fetchGlobalData, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -240,7 +242,7 @@ export default function App() {
       addLog(`Успешно`, 'success');
       await refreshData(viewAddress || account);
     } catch (err: any) {
-      addLog(`Сбой транзакции`, 'error');
+      addLog(`Ошибка транзакции`, 'error');
     } finally { 
       setLoading(false); 
     }
@@ -253,7 +255,7 @@ export default function App() {
   const totalGemsUsd = (totalGems / GEM_RATE) * bnbPrice;
   const dailyGemsUsd = (dailyGems / GEM_RATE) * bnbPrice;
 
-  // Real survivability: Current Balance / Daily Net Loss
+  // Survivability calculation using stable 24h delta
   const runwayDays = dailyWithdrawals > 0.001 ? (contractBalance.raw / dailyWithdrawals) : Infinity;
 
   const activeBuildings = kingdom?.tiles.map((raw, id) => {
@@ -299,7 +301,7 @@ export default function App() {
             <h1 className="text-2xl font-black tracking-tighter uppercase italic bg-gradient-to-r from-white to-zinc-500 bg-clip-text text-transparent">Kingdom Commander</h1>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.3em]">SENSORS ACTIVE — SCANNING DELTA</span>
+              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.3em]">STABLE 24H TRACKING ACTIVE</span>
             </div>
           </div>
         </div>
@@ -307,24 +309,26 @@ export default function App() {
         <div className="flex flex-wrap gap-4 items-center justify-center lg:justify-end">
           <div className="apple-dark-card px-6 py-4 flex items-center gap-8 border-emerald-500/20 bg-emerald-500/5 backdrop-blur-xl">
             <div className="text-left border-r border-white/10 pr-8">
-              <span className="block text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Объем Пула</span>
+              <span className="block text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Баланс Контракта</span>
               <div className="flex items-baseline gap-2">
                 <span className="text-xl font-black tabular-nums text-emerald-400 leading-none">{contractBalance.bnb} BNB</span>
                 <span className="text-[12px] font-bold text-emerald-500/50">{contractBalance.usd}</span>
               </div>
-              <div className="text-[9px] text-zinc-500 mt-1 font-bold italic">Total In: {totalDeposited.toFixed(1)} BNB</div>
+              <div className="text-[9px] text-zinc-500 mt-1 font-bold italic">Всего вложено: {totalDeposited.toFixed(1)} BNB</div>
             </div>
             <div className="text-left border-r border-white/10 pr-8">
-              <span className="block text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Чистый Отток (24ч)</span>
+              <span className="block text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Чистый Отток (Сутки)</span>
               <span className="text-xl font-black tabular-nums text-amber-400 leading-none">{dailyWithdrawals.toFixed(3)} BNB</span>
-              <div className="text-[9px] text-zinc-500 mt-1 font-bold">Данные за последние {historyDuration}</div>
+              <div className="text-[9px] text-zinc-500 mt-1 font-bold">
+                Базис: {anchorInfo ? `${anchorInfo.bnb} BNB (${anchorInfo.time})` : 'Сбор данных...'}
+              </div>
             </div>
             <div className="text-left">
               <span className="block text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Живучесть</span>
               <span className={`text-xl font-black tabular-nums leading-none ${runwayDays < 5 ? 'text-red-500 animate-pulse' : 'text-blue-400'}`}>
-                {runwayDays === Infinity ? 'РОСТ 📈' : `~${runwayDays.toFixed(0)} дн.`}
+                {runwayDays === Infinity ? 'РОСТ ПУЛА 📈' : `~${runwayDays.toFixed(0)} дн.`}
               </span>
-              <div className="text-[9px] text-zinc-500 mt-1 font-bold">Прогноз до 0 BNB</div>
+              <div className="text-[9px] text-zinc-500 mt-1 font-bold">Окно: {historyDuration}</div>
             </div>
           </div>
           
