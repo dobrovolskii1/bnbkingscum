@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ethers, BrowserProvider, Contract, formatEther, isAddress } from 'ethers';
-import { CONTRACT_ADDRESS, CONTRACT_ABI, BSC_RPC_URL } from './constants';
+import { ethers, BrowserProvider, Contract, formatEther, isAddress, parseUnits } from 'ethers';
+import { CONTRACT_ADDRESS, CONTRACT_ABI, BSC_RPC_URL, BSC_CHAIN_ID } from './constants';
 import { KingdomData, LogEntry } from './types';
 
 declare global {
@@ -21,7 +21,7 @@ const BUILDING_TYPES = [
   { type: 8, name: "Core", cost: 2000000, yield: 2300, icon: "💎" },
 ];
 
-const EXIT_HORIZON_HOURS = 30 * 24; // 720 hours until project "scams"
+const EXIT_HORIZON_HOURS = 30 * 24; // 720 hours until project exit
 
 const StatusLog: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -53,11 +53,11 @@ export default function App() {
   const [accumulated, setAccumulated] = useState({ gold: 0, gems: 0 });
   const [loading, setLoading] = useState<boolean>(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [winChance, setWinChance] = useState<string>('50');
+  const [winChance, setWinChance] = useState<string>('60');
   const [bnbPrice, setBnbPrice] = useState<number>(0);
 
   const addLog = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
-    setLogs(prev => [...prev.slice(-10), { id: Math.random().toString(36).substr(2, 9), message, type, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }]);
+    setLogs(prev => [...prev.slice(-15), { id: Math.random().toString(36).substr(2, 9), message, type, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }]);
   };
 
   const fetchGlobalData = async () => {
@@ -118,6 +118,26 @@ export default function App() {
     }
   }, []);
 
+  const checkAndSwitchNetwork = async () => {
+    if (!window.ethereum) return false;
+    const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+    if (currentChainId !== BSC_CHAIN_ID) {
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: BSC_CHAIN_ID }],
+        });
+        return true;
+      } catch (switchError: any) {
+        if (switchError.code === 4902) {
+          addLog("Please add BSC Network to MetaMask", "error");
+        }
+        return false;
+      }
+    }
+    return true;
+  };
+
   const connectWallet = async () => {
     if (!window.ethereum) return addLog('MetaMask не найден', 'error');
     try {
@@ -149,29 +169,49 @@ export default function App() {
         battleTime: Number(kd[6]),
         tiles: Array.from(kd[11]).map(t => Number(t))
       });
-    } catch (err: any) { addLog('Sync...', 'info'); }
+    } catch (err: any) { addLog('Syncing...', 'info'); }
   };
 
   const executeTx = async (methodName: string, params: any[], value: bigint = 0n) => {
     if (!account) return addLog('Подключите кошелек', 'error');
+    
+    const isCorrectNetwork = await checkAndSwitchNetwork();
+    if (!isCorrectNetwork) return addLog('Смените сеть на BSC', 'error');
+
     try {
       setLoading(true);
       const provider = new BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+      
+      // Attempt to estimate gas to catch errors before broadcast
+      try {
+        await contract[methodName].estimateGas(...params, { value });
+      } catch (estError: any) {
+        const msg = estError.reason || estError.message || "Execution Reverted";
+        addLog(`Reverted: ${msg.slice(0, 40)}...`, 'error');
+        setLoading(false);
+        return;
+      }
+
       const tx = await contract[methodName](...params, { value });
-      addLog(`TX Sent`, 'info');
+      addLog(`TX Sent: ${methodName}`, 'info');
       await tx.wait();
-      addLog(`TX Confirmed`, 'success');
+      addLog(`${methodName} Confirmed!`, 'success');
       await refreshData(viewAddress || account);
       fetchGlobalData();
-    } catch (err: any) { addLog(`Error`, 'error'); } finally { setLoading(false); }
+    } catch (err: any) { 
+      const errorMsg = err.reason || err.message || "Transaction Error";
+      addLog(`Error: ${errorMsg.slice(0, 30)}`, 'error'); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const build = (type: number, cost: number) => {
     const firstFree = kingdom?.tiles.indexOf(0);
-    if (firstFree === -1 || firstFree === undefined) return addLog('Limit reached', 'error');
-    if (totalGold < cost) return addLog('No gold', 'error');
+    if (firstFree === -1 || firstFree === undefined) return addLog('Нет свободных слотов', 'error');
+    if (totalGold < cost) return addLog('Недостаточно золота', 'error');
     executeTx('placeBuildings', [[firstFree], type]);
   };
 
@@ -191,47 +231,40 @@ export default function App() {
   const potentialReward = Math.floor(dailyYield * (chanceNum / 100) * 1.5);
   const potentialLoss = Math.floor(dailyYield * 0.5);
 
-  // Strategic Battle recommendation: 60% yields the highest expected value mathematically
-  const recommendedChance = 60;
+  const recommendedChance = 60; // Max expected value
 
-  // Expected value per hour from battles (EV(p) = p * Reward - (1-p) * Loss)
-  const battleExpectedGainPerHour = (potentialReward * (chanceNum / 100)) - (potentialLoss * (1 - (chanceNum / 100)));
-
-  // PONZI STRATEGIC ADVISOR: Maximize net gem profit by day 30
+  // PONZI STRATEGIC ADVISOR: Maximize total Gems by spending non-withdrawable Gold
   const bestAction = useMemo(() => {
     if (!kingdom) return null;
     
     const options: any[] = [];
     const slotsAvailable = kingdom.tiles.includes(0);
-    const currentYield = kingdom.perHour + Math.max(0, battleExpectedGainPerHour);
+    const currentYield = kingdom.perHour; // Base hourly yield
 
-    // 1. Buying new
+    // Calc Gem gain for new buildings
     if (slotsAvailable) {
       BUILDING_TYPES.forEach(b => {
         const costToSave = Math.max(0, b.cost - totalGold);
-        const hoursToSave = costToSave / currentYield;
+        const hoursToSave = currentYield > 0 ? (costToSave / currentYield) : (costToSave > 0 ? 9999 : 0);
         const productiveHours = EXIT_HORIZON_HOURS - hoursToSave;
         
         if (productiveHours > 0) {
-          const netGemProfitByEnd = (b.yield * productiveHours) - b.cost;
-          if (netGemProfitByEnd > 0) {
-            options.push({
-              type: 'BUY',
-              name: b.name,
-              cost: b.cost,
-              yieldInc: b.yield,
-              breakevenHours: b.cost / b.yield,
-              totalProfitByEnd: netGemProfitByEnd,
-              hoursToSave,
-              icon: b.icon,
-              payload: [b.type, b.cost]
-            });
-          }
+          const totalGemsByEnd = b.yield * productiveHours;
+          options.push({
+            type: 'BUY',
+            name: b.name,
+            cost: b.cost,
+            yieldInc: b.yield,
+            totalGemsByEnd,
+            hoursToSave,
+            icon: b.icon,
+            payload: [b.type, b.cost]
+          });
         }
       });
     }
 
-    // 2. Upgrading
+    // Calc Gem gain for upgrades
     activeBuildings.forEach(b => {
       if (b.upgrades < 9) {
         const base = BUILDING_TYPES.find(t => t.type === b.baseType);
@@ -239,36 +272,33 @@ export default function App() {
           const upCost = base.cost / 4;
           const upYield = base.yield / 4;
           const costToSave = Math.max(0, upCost - totalGold);
-          const hoursToSave = costToSave / currentYield;
+          const hoursToSave = currentYield > 0 ? (costToSave / currentYield) : (costToSave > 0 ? 9999 : 0);
           const productiveHours = EXIT_HORIZON_HOURS - hoursToSave;
 
           if (productiveHours > 0) {
-            const netGemProfitByEnd = (upYield * productiveHours) - upCost;
-            if (netGemProfitByEnd > 0) {
-              options.push({
-                type: 'UPGRADE',
-                name: `${base.name} #${b.id}`,
-                cost: upCost,
-                yieldInc: upYield,
-                breakevenHours: upCost / upYield,
-                totalProfitByEnd: netGemProfitByEnd,
-                hoursToSave,
-                icon: base.icon,
-                payload: [b.id]
-              });
-            }
+            const totalGemsByEnd = upYield * productiveHours;
+            options.push({
+              type: 'UPGRADE',
+              name: `${base.name} #${b.id}`,
+              cost: upCost,
+              yieldInc: upYield,
+              totalGemsByEnd,
+              hoursToSave,
+              icon: base.icon,
+              payload: [b.id]
+            });
           }
         }
       }
     });
 
-    if (options.length === 0) return { type: 'STOP', name: 'Extraction Mode', totalProfitByEnd: 0, cost: 0 };
+    if (options.length === 0) return { type: 'STOP', name: 'Extraction Phase', totalGemsByEnd: 0, cost: 0 };
 
-    return options.sort((a, b) => b.totalProfitByEnd - a.totalProfitByEnd)[0];
-  }, [kingdom, activeBuildings, totalGold, battleExpectedGainPerHour]);
+    return options.sort((a, b) => b.totalGemsByEnd - a.totalGemsByEnd)[0];
+  }, [kingdom, activeBuildings, totalGold]);
 
   const withdrawAll = () => {
-    if (totalGems <= 0) return addLog('Empty storage', 'error');
+    if (totalGems <= 0) return addLog('Нет доступных Гемов', 'error');
     executeTx('sellGems', [totalGems]);
   };
 
@@ -318,7 +348,7 @@ export default function App() {
       {/* STATS PANEL */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {[
-          { label: 'Золото (Gold)', val: `${totalGold.toLocaleString()} G`, sub: `In-Game Reserve`, color: 'text-amber-400', icon: '🟡' },
+          { label: 'Золото (Gold)', val: `${totalGold.toLocaleString()} G`, sub: `Только для игры`, color: 'text-amber-400', icon: '🟡' },
           { label: 'Гемы (Gems)', val: `${totalGems.toLocaleString()} 💎`, sub: `~$${gemToUsd(totalGems).toFixed(2)}`, color: 'text-indigo-400', icon: '💎' },
           { label: 'Доход/час', val: `${(kingdom?.perHour ?? 0).toLocaleString()} G/h`, sub: `+$${gemToUsd(kingdom?.perHour || 0).toFixed(3)}/h`, color: 'text-emerald-400', icon: '📈' },
           { label: 'Баланс BNB', val: `${Number(balance).toFixed(4)} BNB`, sub: `$${(Number(balance) * bnbPrice).toFixed(2)}`, color: 'text-white', icon: '💳' }
@@ -352,7 +382,7 @@ export default function App() {
                         <div className="text-[10px] text-zinc-500 font-mono">
                           {b.cost.toLocaleString()} G
                         </div>
-                        <div className="text-[9px] text-emerald-500 font-bold">+{b.yield} G/h <span className="text-zinc-500 font-normal opacity-50 ml-1">(~$${gemToUsd(b.yield).toFixed(3)})</span></div>
+                        <div className="text-[9px] text-emerald-500 font-bold">+{b.yield} G/h</div>
                       </div>
                     </div>
                     <button 
@@ -369,20 +399,17 @@ export default function App() {
           <div className="apple-dark-card p-6 h-[260px] border-indigo-500/10 bg-indigo-500/5 flex flex-col justify-between">
             <h3 className="text-[11px] font-bold text-indigo-400 uppercase tracking-[0.2em] mb-2">Extraction_Center</h3>
             <div className="bg-black/40 p-5 rounded-xl text-center border border-white/5">
-              <span className="text-3xl font-black text-white tabular-nums">{totalGems.toLocaleString()} 💎</span>
-              <div className="mt-2 flex items-center justify-center gap-2">
-                <span className="text-indigo-400 font-black text-lg tabular-nums">${gemToUsd(totalGems).toFixed(2)}</span>
-                <span className="text-[9px] text-zinc-600 uppercase font-bold">Total Liquid</span>
+              <div className="flex flex-col items-center">
+                <span className="text-3xl font-black text-white tabular-nums">{totalGems.toLocaleString()} 💎</span>
+                <span className="text-indigo-400 font-black text-lg tabular-nums mt-1">${gemToUsd(totalGems).toFixed(2)}</span>
               </div>
-              {gemToUsd(totalGems) > (contractBalance.raw * bnbPrice) && (
-                <div className="mt-2 text-[9px] text-red-500 font-black animate-pulse uppercase">Insufficient Contract Liquidity!</div>
-              )}
+              <div className="mt-2 text-[9px] text-zinc-600 uppercase font-bold">Чистая прибыль в BNB</div>
             </div>
             <button 
               onClick={withdrawAll}
               disabled={loading || totalGems <= 0}
               className={`w-full py-4 rounded-xl font-bold text-[12px] transition-all ${totalGems > 0 ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20' : 'bg-zinc-800 text-zinc-700 cursor-not-allowed'}`}
-            >EXECUTE EXIT STRATEGY</button>
+            >ВЫВЕСТИ ВСЕ ГЕМЫ</button>
           </div>
         </div>
 
@@ -392,7 +419,7 @@ export default function App() {
           <div className="apple-dark-card p-6 h-[460px] flex flex-col">
             <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
               <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Infrastructure</h2>
-              <span className="text-[10px] text-zinc-600 font-mono italic">30D Extraction Optimization</span>
+              <span className="text-[10px] text-zinc-600 font-mono italic">30D extraction strategy</span>
             </div>
 
             {/* STRATEGIC ADVISOR */}
@@ -407,14 +434,14 @@ export default function App() {
                           <span className="text-blue-400 animate-pulse text-2xl">💡</span>
                         </div>
                         <div className="flex-1">
-                          <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest">STRATEGIC PONZI ADVISOR</span>
+                          <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest">STRATEGIC ADVISOR: ПОТЕНЦИАЛ ВЫВОДА</span>
                           <div className="text-white font-bold text-[15px] mt-0.5 leading-tight">
-                            Recommended {bestAction.type === 'BUY' ? 'New Asset' : 'Optimization'}: <span className="text-blue-400">{bestAction.name}</span> {bestAction.icon}
+                            Цель: {bestAction.type === 'BUY' ? 'купить' : 'улучшить'} <span className="text-blue-400">{bestAction.name}</span> {bestAction.icon}
                           </div>
                           <div className="text-[10px] mt-2 text-zinc-400 flex flex-wrap gap-x-6 gap-y-1">
-                            <span>Projected Profit: <span className="text-emerald-400 font-black">+{bestAction.totalProfitByEnd.toLocaleString()} G (~$${gemToUsd(bestAction.totalProfitByEnd).toFixed(2)})</span></span>
-                            <span>Breakeven: <span className="text-amber-500 font-bold">{Math.ceil(bestAction.breakevenHours)}h</span></span>
-                            <span>Optimal Risk: <span className="text-white font-bold">{recommendedChance}% Battle Chance</span></span>
+                            <span>Ожидаемые Гемы (Day 30): <span className="text-emerald-400 font-black">+{Math.floor(bestAction.totalGemsByEnd).toLocaleString()} 💎</span></span>
+                            <span>Доступно через: <span className="text-amber-500 font-bold">{bestAction.hoursToSave <= 0 ? 'СЕЙЧАС' : `${Math.ceil(bestAction.hoursToSave)}ч.`}</span></span>
+                            <span>Баттл: <span className="text-white font-bold">Оптимально {recommendedChance}%</span></span>
                           </div>
                         </div>
                       </div>
@@ -423,7 +450,7 @@ export default function App() {
                         disabled={totalGold < bestAction.cost || loading || !isOwnAccount}
                         className={`px-6 py-2 rounded-xl font-black text-[11px] uppercase transition-all shadow-lg ${totalGold >= bestAction.cost ? 'bg-white text-black hover:bg-zinc-200 shadow-blue-500/10' : 'bg-zinc-800 text-zinc-600 border border-white/5 cursor-not-allowed'}`}
                       >
-                        {totalGold >= bestAction.cost ? 'Execute Strategy' : `Wait ${Math.ceil(bestAction.hoursToSave)}h`}
+                        {totalGold >= bestAction.cost ? 'Выполнить совет' : `Ждать ${Math.ceil(bestAction.hoursToSave)}ч.`}
                       </button>
                     </div>
                   </>
@@ -431,9 +458,9 @@ export default function App() {
                   <div className="flex items-center gap-4 py-2 relative z-10">
                     <span className="text-3xl">🏦</span>
                     <div>
-                      <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest">STATIONARY PHASE REACHED</div>
-                      <div className="text-white font-bold text-sm">No remaining investments yield profit within the 30-day window. Collect all resources.</div>
-                      <div className="text-[10px] text-zinc-500 mt-1">Advisor Tip: Stick to <span className="text-white font-bold">{recommendedChance}% Chance</span> for maximal expected extraction.</div>
+                      <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest">ФАЗА ЧИСТОГО ВЫВОДА</div>
+                      <div className="text-white font-bold text-sm">Новые здания не окупятся за 30 дней. Просто выводи гемы.</div>
+                      <div className="text-[10px] text-zinc-500 mt-1">Совет: Используй <span className="text-white font-bold">{recommendedChance}%</span> в баттле для максимизации остатка.</div>
                     </div>
                   </div>
                 )}
@@ -462,7 +489,7 @@ export default function App() {
                             <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">LVL {b.displayLevel}</span>
                           </div>
                           <div className="text-[10px] text-zinc-500 font-mono mt-1">
-                            Current: <span className="text-emerald-500 font-bold">{curYield} G/h</span> <span className="text-zinc-600 opacity-60">(~$${gemToUsd(curYield).toFixed(3)})</span>
+                            Доход: <span className="text-emerald-400 font-bold">{curYield} G/h</span>
                             {!isMax && <div className="text-zinc-600">Upgrade: <span className="text-blue-400">+{upYield} G/h</span></div>}
                           </div>
                         </div>
@@ -471,7 +498,7 @@ export default function App() {
                         <button 
                           onClick={() => executeTx('upgradeBuilding', [b.id])}
                           disabled={!isOwnAccount || loading || !canAfford}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold shadow-sm transition-all ${canAfford ? 'bg-zinc-100 text-black hover:bg-white' : 'bg-zinc-800 text-zinc-600'}`}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold shadow-sm transition-all ${canAfford ? 'bg-zinc-100 text-black hover:bg-white' : 'bg-zinc-800 text-zinc-700'}`}
                         >UP {upCost.toLocaleString()} G</button>
                       ) : (
                         <span className="text-[8px] text-zinc-600 font-bold uppercase tracking-widest opacity-40">MAX LVL</span>
@@ -489,11 +516,11 @@ export default function App() {
                <h2 className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Tactical_Combat_Simulation</h2>
                <div className="flex gap-4">
                   <div className="flex flex-col items-end">
-                    <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider">WIN +{potentialReward.toLocaleString()} G</span>
-                    <span className="text-[8px] text-zinc-500 font-mono italic">Expected Reward</span>
+                    <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider">WIN: +{potentialReward.toLocaleString()} G</span>
+                    <span className="text-[8px] text-zinc-500 font-mono italic">Potential Reward</span>
                   </div>
                   <div className="flex flex-col items-end border-l border-white/5 pl-4">
-                    <span className="text-[10px] text-red-500 font-bold uppercase tracking-wider">LOSS -{potentialLoss.toLocaleString()} G</span>
+                    <span className="text-[10px] text-red-500 font-bold uppercase tracking-wider">LOSS: -{potentialLoss.toLocaleString()} G</span>
                     <span className="text-[8px] text-zinc-500 font-mono italic">Calculated Risk</span>
                   </div>
                </div>
@@ -502,9 +529,9 @@ export default function App() {
             <div className="flex items-center gap-6 bg-black/30 p-4 rounded-xl border border-white/5 shadow-inner">
               <div className="flex-1 flex flex-col gap-3">
                 <div className="flex justify-between text-[8px] font-bold text-zinc-600 uppercase">
-                  <span>Conservative</span>
-                  <span className={`${parseInt(winChance) === recommendedChance ? 'text-blue-400 animate-pulse font-black' : ''}`}>Best Yield: {recommendedChance}%</span>
-                  <span>Aggressive</span>
+                  <span>Balanced</span>
+                  <span className={`${parseInt(winChance) === recommendedChance ? 'text-blue-400 animate-pulse font-black' : ''}`}>Best: {recommendedChance}%</span>
+                  <span>Risky</span>
                 </div>
                 <input 
                   type="range" min="40" max="60" value={winChance} 
@@ -522,7 +549,9 @@ export default function App() {
               onClick={() => executeTx('battle', [parseInt(winChance)])}
               disabled={!isOwnAccount || loading || (kingdom?.perHour === 0)}
               className={`w-full py-4 rounded-xl font-black text-lg transition-all active:scale-[0.98] ${loading || (kingdom?.perHour === 0) ? 'bg-zinc-800 text-zinc-700' : 'bg-white text-black hover:bg-zinc-200 shadow-lg shadow-white/5'}`}
-            >EXECUTE STRATEGIC STRIKE</button>
+            >
+              {kingdom?.perHour === 0 ? 'НУЖЕН ДОХОД ДЛЯ БИТВЫ' : 'В АТАКУ!'}
+            </button>
           </div>
         </div>
       </div>
@@ -530,7 +559,7 @@ export default function App() {
       <StatusLog logs={logs} />
       
       <footer className="mt-2 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-[0.3em] pb-2">
-         System v6.3 // BSC Node: Grid Active // Exit Window: {EXIT_HORIZON_HOURS}h // Extraction Priority
+         System v6.5 // BSC Grid Active // Exit Window: {EXIT_HORIZON_HOURS}h // Extraction Priority
       </footer>
     </div>
   );
