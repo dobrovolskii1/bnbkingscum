@@ -243,6 +243,10 @@ export default function App() {
   const deltaBnb = yesterdayBalance !== null ? contractBalance.raw - yesterdayBalance : 0;
   const deltaColor = deltaBnb >= 0 ? 'text-emerald-400' : 'text-red-400';
 
+  // Pool depletion estimate: days left = current balance / daily outflow
+  const dailyOutflow = deltaBnb < 0 ? Math.abs(deltaBnb) : 0;
+  const poolRunwayDays = dailyOutflow > 0.001 ? (contractBalance.raw / dailyOutflow) : null;
+
   const activeBuildings = kingdom?.tiles.map((raw, id) => {
     const baseType = raw % 10;
     const upgrades = Math.floor(raw / 10);
@@ -298,12 +302,16 @@ export default function App() {
               <div className="flex flex-col">
                 <div className="flex items-baseline gap-2">
                   <span className="text-xl font-black tabular-nums text-white leading-none">{contractBalance.bnb} BNB</span>
-                  <span className="text-sm font-bold text-emerald-500">{contractBalance.usd}</span>
+                  <span className="text-sm font-bold text-emerald-400">{contractBalance.usd}</span>
                 </div>
-                <div className="text-[9px] text-zinc-600 mt-1 font-bold italic uppercase tracking-wider">Всего вложено: {totalDeposited.toFixed(1)} BNB</div>
+                <div className="flex items-center gap-2 mt-1">
+                    <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-wider">Курс: <span className="text-zinc-300">${bnbPrice.toFixed(2)}</span></div>
+                    <span className="text-[9px] opacity-20">|</span>
+                    <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-wider">Вложено: <span className="text-zinc-300">{totalDeposited.toFixed(1)}</span></div>
+                </div>
               </div>
             </div>
-            <div className="text-left min-w-[180px]">
+            <div className="text-left min-w-[200px]">
               <span className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Изменение (24ч)</span>
               <div className="flex items-baseline gap-3">
                 <span className={`text-xl font-black tabular-nums leading-none ${deltaColor}`}>
@@ -313,11 +321,23 @@ export default function App() {
                   {yesterdayBalance ? `${((deltaBnb / yesterdayBalance) * 100).toFixed(2)}%` : '0%'}
                 </span>
               </div>
-              <div className="text-[9px] text-zinc-600 mt-1 font-bold flex gap-1 uppercase tracking-tighter">
-                <span>Был:</span>
-                <span className="text-zinc-400">{yesterdayBalance !== null ? `${yesterdayBalance.toFixed(2)} BNB` : '...'}</span>
-                <span className="opacity-40">•</span>
-                <span>{anchorTime || 'Сбор данных'}</span>
+              <div className="mt-1 flex flex-col gap-0.5">
+                  <div className="text-[9px] text-zinc-600 font-bold flex gap-1 uppercase tracking-tighter">
+                    <span>Был:</span>
+                    <span className="text-zinc-400">{yesterdayBalance !== null ? `${yesterdayBalance.toFixed(2)} BNB` : '...'}</span>
+                    <span className="opacity-40">•</span>
+                    <span>{anchorTime || 'Сбор данных'}</span>
+                  </div>
+                  {poolRunwayDays !== null && (
+                      <div className="text-[9px] font-black uppercase tracking-widest text-blue-400/80">
+                          Живучесть пула: <span className="text-blue-400">~{poolRunwayDays.toFixed(0)} дн.</span>
+                      </div>
+                  )}
+                  {deltaBnb >= 0 && yesterdayBalance !== null && (
+                      <div className="text-[9px] font-black uppercase tracking-widest text-emerald-500/80">
+                          Статус: <span className="text-emerald-400">Пул растет 📈</span>
+                      </div>
+                  )}
               </div>
             </div>
           </div>
