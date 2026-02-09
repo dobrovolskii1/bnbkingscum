@@ -25,6 +25,7 @@ const EXIT_HORIZON_HOURS = 30 * 24;
 const BATTLE_COOLDOWN = 86400; 
 const SAFETY_BUFFER = 5;
 const GEM_RATE = 1000000; // 1,000,000 Gems = 1 BNB
+const BLOCKS_PER_DAY = 28800; // ~3s per block on BSC
 
 const StatusLog: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -52,6 +53,7 @@ export default function App() {
   const [viewAddress, setViewAddress] = useState<string>('');
   const [balance, setBalance] = useState<string>('0');
   const [contractBalance, setContractBalance] = useState<{bnb: string, usd: string, raw: number}>({bnb: '0', usd: '0', raw: 0});
+  const [dailyWithdrawals, setDailyWithdrawals] = useState<number>(0);
   const [kingdom, setKingdom] = useState<KingdomData | null>(null);
   const [accumulated, setAccumulated] = useState({ gold: 0, gems: 0 });
   const [battleCooldownStr, setBattleCooldownStr] = useState<string>('');
@@ -68,25 +70,47 @@ export default function App() {
   const fetchGlobalData = async () => {
     try {
       const provider = new ethers.JsonRpcProvider(BSC_RPC_URL);
-      const cBal = await provider.getBalance(CONTRACT_ADDRESS);
-      const bnbVal = formatEther(cBal);
+      
+      // Fetch BNB Price
       const priceRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT');
       const priceData = await priceRes.json();
       const currentPrice = parseFloat(priceData.price);
       setBnbPrice(currentPrice);
+
+      // Fetch Contract Balance
+      const cBal = await provider.getBalance(CONTRACT_ADDRESS);
+      const bnbVal = formatEther(cBal);
       setContractBalance({
         raw: Number(bnbVal),
         bnb: Number(bnbVal).toFixed(2),
         usd: (Number(bnbVal) * currentPrice).toLocaleString('ru-RU', { style: 'currency', currency: 'USD' })
       });
+
+      // Fetch Daily Withdrawals (estimated via BattleResult gems)
+      const currentBlock = await provider.getBlockNumber();
+      const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+      const filter = contract.filters.BattleResult();
+      const events = await contract.queryFilter(filter, currentBlock - BLOCKS_PER_DAY, currentBlock);
+      
+      let totalGemsOut = 0;
+      events.forEach((event: any) => {
+        // args: [king, isWin, winChance, battleReward]
+        if (event.args && event.args[1] === true) {
+          totalGemsOut += Number(event.args[3]);
+        }
+      });
+      // Also assume some manual sellGems calls happen. 
+      // Since we don't have GemSold event in ABI, we use BattleResult as a primary activity indicator.
+      setDailyWithdrawals(totalGemsOut / GEM_RATE);
+
     } catch (err) { 
-      console.warn("Global sync skipped"); 
+      console.warn("Global sync skipped or limited by RPC"); 
     }
   };
 
   useEffect(() => {
     fetchGlobalData();
-    const interval = setInterval(fetchGlobalData, 30000);
+    const interval = setInterval(fetchGlobalData, 45000);
     return () => clearInterval(interval);
   }, []);
 
@@ -206,9 +230,10 @@ export default function App() {
   const perHour = kingdom?.perHour || 0;
   const dailyGems = perHour * 24;
 
-  // 1,000,000 Gems = 1 BNB. Value in USD = (Gems / 1,000,000) * bnbPrice
   const totalGemsUsd = (totalGems / GEM_RATE) * bnbPrice;
   const dailyGemsUsd = (dailyGems / GEM_RATE) * bnbPrice;
+
+  const runwayDays = dailyWithdrawals > 0 ? (contractBalance.raw / dailyWithdrawals) : Infinity;
 
   const activeBuildings = kingdom?.tiles.map((raw, id) => {
     const baseType = raw % 10;
@@ -255,18 +280,30 @@ export default function App() {
           <div>
             <h1 className="text-xl font-black tracking-tight uppercase italic">Kingdom Commander</h1>
             <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
-              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">КУРС BNB: ${bnbPrice.toFixed(2)}</span>
+              <span className="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-pulse"></span>
+              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">BNB: ${bnbPrice.toFixed(2)}</span>
             </div>
           </div>
         </div>
-        <div className="flex gap-3 items-center">
-          <div className="apple-dark-card px-4 py-2 flex items-center gap-3 border-emerald-500/10 bg-emerald-500/5">
-            <div className="text-right">
-              <span className="block text-[8px] font-bold text-emerald-500 uppercase tracking-tighter">Ликвидность контракта</span>
-              <span className="text-[14px] font-black tabular-nums text-emerald-400">{contractBalance.bnb} BNB <span className="text-[10px] opacity-60">({contractBalance.usd})</span></span>
+        
+        <div className="flex flex-wrap gap-3 items-center justify-center lg:justify-end">
+          <div className="apple-dark-card px-4 py-2 flex items-center gap-4 border-emerald-500/10 bg-emerald-500/5">
+            <div className="text-left border-r border-white/10 pr-4">
+              <span className="block text-[8px] font-bold text-emerald-500 uppercase tracking-tighter">Ликвидность</span>
+              <span className="text-[14px] font-black tabular-nums text-emerald-400">{contractBalance.bnb} BNB</span>
+            </div>
+            <div className="text-left">
+              <span className="block text-[8px] font-bold text-amber-500 uppercase tracking-tighter">Вывод (24ч)</span>
+              <span className="text-[14px] font-black tabular-nums text-amber-400">{dailyWithdrawals.toFixed(3)} BNB</span>
+            </div>
+            <div className="text-left pl-2">
+              <span className="block text-[8px] font-bold text-blue-400 uppercase tracking-tighter">Живучесть</span>
+              <span className={`text-[14px] font-black tabular-nums ${runwayDays < 5 ? 'text-red-500' : 'text-blue-400'}`}>
+                {runwayDays === Infinity ? '∞' : `~${runwayDays.toFixed(0)} дн.`}
+              </span>
             </div>
           </div>
+          
           <div className="flex gap-3 items-center apple-dark-card p-1 pr-3 h-11">
             <input type="text" placeholder="Адрес..." value={viewAddress} onChange={e => setViewAddress(e.target.value)} className="bg-zinc-800/40 px-3 py-1.5 rounded-lg text-[12px] outline-none w-32 font-medium" />
             <button onClick={connectWallet} className="bg-white text-black px-4 h-8 rounded-lg font-bold text-[11px] hover:bg-zinc-200">{account ? account.slice(0, 6) + '...' : 'Вход'}</button>
@@ -282,7 +319,7 @@ export default function App() {
           { label: 'Суточный фарм', val: `${dailyGems.toLocaleString()} 💎`, sub: `≈ $${dailyGemsUsd.toFixed(2)} / день`, color: 'text-blue-400', icon: '⚡' },
           { label: 'Кошелек (BNB)', val: `${Number(balance).toFixed(4)}`, sub: `≈ $${(Number(balance) * bnbPrice).toFixed(2)}`, color: 'text-white', icon: '💳' }
         ].map((s, i) => (
-          <div key={i} className="apple-dark-card p-4 flex justify-between items-center group overflow-hidden">
+          <div key={i} className="apple-dark-card p-4 flex justify-between items-center group overflow-hidden relative">
             <div className="z-10">
               <div className="text-[9px] font-bold text-zinc-600 uppercase mb-0.5 whitespace-nowrap">{s.label}</div>
               <div className={`text-lg font-black ${s.color} tabular-nums leading-none mb-1`}>{s.val}</div>
