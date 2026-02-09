@@ -77,7 +77,9 @@ export default function App() {
         bnb: Number(bnbVal).toFixed(2),
         usd: (Number(bnbVal) * parseFloat(priceData.price)).toLocaleString('ru-RU', { style: 'currency', currency: 'USD' })
       });
-    } catch (err) { console.error("Ошибка синхронизации"); }
+    } catch (err) { 
+      console.warn("Global sync failed, will retry..."); 
+    }
   };
 
   useEffect(() => {
@@ -148,7 +150,10 @@ export default function App() {
         battleTime: Number(kd[6]),
         tiles: Array.from(kd[11]).map(t => Number(t))
       });
-    } catch (err) { addLog('Синхронизация данных...', 'info'); }
+    } catch (err) { 
+       // Don't spam the terminal, just log to console
+       console.warn('Silent sync...'); 
+    }
   };
 
   const connectWallet = async () => {
@@ -163,23 +168,50 @@ export default function App() {
 
   const executeTx = async (methodName: string, params: any[], value: bigint = 0n) => {
     if (!account) return addLog('Подключите кошелек', 'error');
+    setLoading(true);
     try {
-      setLoading(true);
       const provider = new BrowserProvider(window.ethereum);
-      const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (chainId !== BSC_CHAIN_ID) {
+      const network = await provider.getNetwork();
+      if (network.chainId !== BigInt(parseInt(BSC_CHAIN_ID, 16))) {
         await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: BSC_CHAIN_ID }] });
       }
+      
       const signer = await provider.getSigner();
       const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
       addLog(`Выполнение ${methodName}...`, 'info');
-      const tx = await contract[methodName](...params, { value });
+      
+      // Attempt manual gas estimation to catch 'Failed to fetch' issues early
+      let gasLimit;
+      try {
+        gasLimit = await contract[methodName].estimateGas(...params, { value });
+        // Add 20% buffer
+        gasLimit = (gasLimit * 120n) / 100n;
+      } catch (e) {
+        console.warn("Gas estimation failed, using default");
+      }
+
+      const tx = await contract[methodName](...params, { value, gasLimit });
+      addLog(`Транзакция отправлена, ждем подтверждения...`, 'info');
       await tx.wait();
+      
       addLog(`${methodName} успешно выполнено`, 'success');
       await refreshData(viewAddress || account);
     } catch (err: any) {
-      addLog(`Ошибка: ${err.reason || err.message || "Сбой"}`, 'error');
-    } finally { setLoading(false); }
+      console.error("TX ERROR:", err);
+      let errorMsg = "Неизвестная ошибка";
+      
+      if (err.code === -32603 || (err.message && err.message.includes("Failed to fetch"))) {
+        errorMsg = "Ошибка сети кошелька (Failed to fetch). Попробуйте сменить RPC в MetaMask или проверьте интернет.";
+      } else if (err.code === "ACTION_REJECTED") {
+        errorMsg = "Транзакция отклонена пользователем";
+      } else {
+        errorMsg = err.reason || err.shortMessage || err.message || "Сбой транзакции";
+      }
+      
+      addLog(`Ошибка: ${errorMsg}`, 'error');
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const build = (type: number, cost: number) => {

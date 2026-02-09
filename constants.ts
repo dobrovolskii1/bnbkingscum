@@ -1,7 +1,7 @@
 
 export const CONTRACT_ADDRESS = '0x864EE1d1B51306e30836B84AdE81e39ebB6e8e0C';
 export const BSC_CHAIN_ID = '0x38'; // 56 in hex
-export const BSC_RPC_URL = 'https://bsc-dataseed.binance.org/';
+export const BSC_RPC_URL = 'https://binance.llamarpc.com';
 
 export const CONTRACT_ABI = [
   {"inputs":[{"components":[{"internalType":"address","name":"addr","type":"address"},{"internalType":"uint32","name":"share","type":"uint32"}],"internalType":"struct Manager[]","name":"_managers","type":"tuple[]"}],"stateMutability":"nonpayable","type":"constructor"},
