@@ -52,10 +52,7 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   
-  const [buyAmount, setBuyAmount] = useState<string>('0.05');
   const [winChance, setWinChance] = useState<string>('50'); 
-  const [gemsToSell, setGemsToSell] = useState<string>('100');
-  const [gemsToSwap, setGemsToSwap] = useState<string>('100');
 
   const addLog = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
     setLogs(prev => [...prev.slice(-29), { id: Math.random().toString(36).substr(2, 9), message, type, timestamp: new Date().toLocaleTimeString() }]);
@@ -164,6 +161,12 @@ export default function App() {
   const potentialReward = Math.floor(dailyYield * (chanceNum / 100) * 1.5);
   const potentialLoss = Math.floor(dailyYield * 0.5);
 
+  const withdrawAllGems = () => {
+    if (!totalGems || totalGems <= 0) return addLog('No gems available', 'error');
+    // Using floor to be safe, as contract might have slightly different claim sync
+    executeTx('sellGems', [totalGems]);
+  };
+
   return (
     <div className="min-h-screen matrix-bg text-green-500 font-mono p-3 md:p-5 selection:bg-green-500 selection:text-black">
       <div className="max-w-6xl mx-auto space-y-4">
@@ -245,21 +248,25 @@ export default function App() {
               </div>
             </div>
 
-            <div className="bg-black/70 border border-green-900/30 p-4 space-y-3">
-              <h3 className="text-green-600 font-bold text-xs uppercase mb-2">FINANCIAL_HUB</h3>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <input type="text" value={buyAmount} onChange={e => setBuyAmount(e.target.value)} className="w-16 bg-black border border-green-900 p-1 text-[10px] text-green-400" />
-                  <button onClick={() => executeTx('buyGold', [ethers.ZeroAddress], parseEther(buyAmount))} className="flex-1 py-1.5 bg-green-900/20 border border-green-500/40 text-green-500 font-bold text-[10px] uppercase">Buy Gold (BNB)</button>
+            <div className="bg-black/70 border border-red-900/20 p-4 space-y-3">
+              <h3 className="text-red-600 font-bold text-xs uppercase mb-2">WITHDRAWAL_TERMINAL</h3>
+              <div className="space-y-4">
+                <div className="bg-black/40 border border-red-900/10 p-2 text-center">
+                  <div className="text-[9px] text-red-900 font-bold uppercase mb-1">ALL_AVAILABLE_GEMS</div>
+                  <div className="text-xl font-black text-cyan-400">{totalGems.toLocaleString()}</div>
+                  <div className="text-[8px] text-cyan-900/50 mt-1 uppercase italic tracking-tighter">Syncing Real-time Yield...</div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="number" value={gemsToSwap} onChange={e => setGemsToSwap(e.target.value)} className="w-16 bg-black border border-green-900 p-1 text-[10px] text-cyan-400" />
-                  <button onClick={() => executeTx('swapGemsToGold', [parseInt(gemsToSwap)])} className="flex-1 py-1.5 bg-cyan-900/10 border border-cyan-500/30 text-cyan-400 font-bold text-[10px] uppercase">Swap Gems (1:2)</button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="number" value={gemsToSell} onChange={e => setGemsToSell(e.target.value)} className="w-16 bg-black border border-red-900 p-1 text-[10px] text-red-500" />
-                  <button onClick={() => executeTx('sellGems', [parseInt(gemsToSell)])} className="flex-1 py-1.5 bg-red-900/10 border border-red-500/30 text-red-500 font-bold text-[10px] uppercase">Cash Out Gems</button>
-                </div>
+                
+                <button 
+                  onClick={withdrawAllGems} 
+                  disabled={!isOwnAccount || loading || totalGems <= 0}
+                  className="w-full py-3 bg-red-900/10 border border-red-500/40 text-red-500 font-bold text-[11px] uppercase hover:bg-red-500 hover:text-black transition-all disabled:opacity-20 active:scale-95"
+                >
+                  WITHDRAW ALL TO BNB
+                </button>
+                <p className="text-[8px] text-red-900/60 uppercase italic text-center leading-tight">
+                  Notice: All gems in your vault and accumulated yield will be converted to BNB and sent to your address.
+                </p>
               </div>
             </div>
           </div>
