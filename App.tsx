@@ -78,7 +78,7 @@ export default function App() {
         usd: (Number(bnbVal) * parseFloat(priceData.price)).toLocaleString('ru-RU', { style: 'currency', currency: 'USD' })
       });
     } catch (err) { 
-      console.warn("Global sync failed, will retry..."); 
+      console.warn("Global sync skipped"); 
     }
   };
 
@@ -151,8 +151,7 @@ export default function App() {
         tiles: Array.from(kd[11]).map(t => Number(t))
       });
     } catch (err) { 
-       // Don't spam the terminal, just log to console
-       console.warn('Silent sync...'); 
+       console.warn('Sync attempt failed'); 
     }
   };
 
@@ -171,44 +170,22 @@ export default function App() {
     setLoading(true);
     try {
       const provider = new BrowserProvider(window.ethereum);
-      const network = await provider.getNetwork();
-      if (network.chainId !== BigInt(parseInt(BSC_CHAIN_ID, 16))) {
-        await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: BSC_CHAIN_ID }] });
-      }
-      
       const signer = await provider.getSigner();
       const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-      addLog(`Выполнение ${methodName}...`, 'info');
       
-      // Attempt manual gas estimation to catch 'Failed to fetch' issues early
-      let gasLimit;
-      try {
-        gasLimit = await contract[methodName].estimateGas(...params, { value });
-        // Add 20% buffer
-        gasLimit = (gasLimit * 120n) / 100n;
-      } catch (e) {
-        console.warn("Gas estimation failed, using default");
-      }
-
-      const tx = await contract[methodName](...params, { value, gasLimit });
-      addLog(`Транзакция отправлена, ждем подтверждения...`, 'info');
+      addLog(`Отправка ${methodName}...`, 'info');
+      const tx = await contract[methodName](...params, { value });
+      
+      addLog(`Транзакция в сети...`, 'info');
       await tx.wait();
       
       addLog(`${methodName} успешно выполнено`, 'success');
       await refreshData(viewAddress || account);
     } catch (err: any) {
-      console.error("TX ERROR:", err);
-      let errorMsg = "Неизвестная ошибка";
-      
-      if (err.code === -32603 || (err.message && err.message.includes("Failed to fetch"))) {
-        errorMsg = "Ошибка сети кошелька (Failed to fetch). Попробуйте сменить RPC в MetaMask или проверьте интернет.";
-      } else if (err.code === "ACTION_REJECTED") {
-        errorMsg = "Транзакция отклонена пользователем";
-      } else {
-        errorMsg = err.reason || err.shortMessage || err.message || "Сбой транзакции";
-      }
-      
-      addLog(`Ошибка: ${errorMsg}`, 'error');
+      console.error("TX FAIL:", err);
+      let msg = err.reason || err.message || "Сбой";
+      if (err.code === 'ACTION_REJECTED') msg = "Отменено пользователем";
+      addLog(`Ошибка: ${msg}`, 'error');
     } finally { 
       setLoading(false); 
     }
@@ -222,7 +199,6 @@ export default function App() {
     executeTx('placeBuildings', [[slot], type]);
   };
 
-  const isOwnAccount = account?.toLowerCase() === viewAddress?.toLowerCase();
   const totalGold = (kingdom?.gold || 0) + accumulated.gold;
   const totalGems = (kingdom?.gems || 0) + accumulated.gems;
 
