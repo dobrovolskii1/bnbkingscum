@@ -26,7 +26,7 @@ const BATTLE_COOLDOWN = 86400;
 const SAFETY_BUFFER = 5;
 const GEM_RATE = 1000000; 
 const HISTORY_KEY = 'kingdom_balance_snapshots_v3';
-const MAX_HISTORY_MS = 32 * 60 * 60 * 1000; // Store slightly more than 24h
+const MAX_HISTORY_MS = 32 * 60 * 60 * 1000; 
 
 interface BalanceSnapshot {
   t: number;
@@ -79,20 +79,13 @@ export default function App() {
     const raw = localStorage.getItem(HISTORY_KEY);
     let history: BalanceSnapshot[] = raw ? JSON.parse(raw) : [];
     const now = Date.now();
-
-    // Add current point
     history.push({ t: now, b: currentBnb });
-    // Filter old (keep up to 32h)
     history = history.filter(s => now - s.t <= MAX_HISTORY_MS);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-
     if (history.length < 2) return;
-
-    // Find point closest to 24 hours ago
     const targetTime = now - (24 * 60 * 60 * 1000);
     let closest = history[0];
     let minDiff = Math.abs(closest.t - targetTime);
-
     for (const snap of history) {
       const diff = Math.abs(snap.t - targetTime);
       if (diff < minDiff) {
@@ -100,7 +93,6 @@ export default function App() {
         closest = snap;
       }
     }
-
     setYesterdayBalance(closest.b);
     setAnchorTime(new Date(closest.t).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }));
   };
@@ -108,29 +100,22 @@ export default function App() {
   const fetchGlobalData = async () => {
     try {
       const provider = new ethers.JsonRpcProvider(BSC_RPC_URL);
-      
       const priceRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT');
       const priceData = await priceRes.json();
       const currentPrice = parseFloat(priceData.price);
       setBnbPrice(currentPrice);
-
       const cBal = await provider.getBalance(CONTRACT_ADDRESS);
       const bnbVal = parseFloat(formatEther(cBal));
-      
       const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
       const globalState = await contract.getGlobalState();
       setTotalDeposited(parseFloat(formatEther(globalState.totalDeposited)));
-
       setContractBalance({
         raw: bnbVal,
         bnb: bnbVal.toFixed(2),
         usd: (bnbVal * currentPrice).toLocaleString('ru-RU', { style: 'currency', currency: 'USD' })
       });
-
       updateBalanceHistory(bnbVal);
-
     } catch (err) { 
-      console.error("Global Data Error", err);
       addLog("Ошибка обновления данных", "error");
     }
   };
@@ -242,8 +227,6 @@ export default function App() {
 
   const deltaBnb = yesterdayBalance !== null ? contractBalance.raw - yesterdayBalance : 0;
   const deltaColor = deltaBnb >= 0 ? 'text-emerald-400' : 'text-red-400';
-
-  // Pool depletion estimate: days left = current balance / daily outflow
   const dailyOutflow = deltaBnb < 0 ? Math.abs(deltaBnb) : 0;
   const poolRunwayDays = dailyOutflow > 0.001 ? (contractBalance.raw / dailyOutflow) : null;
 
@@ -257,23 +240,47 @@ export default function App() {
     if (!kingdom) return null;
     const options: any[] = [];
     const effectiveYield = kingdom.perHour * 1.34;
-    const evalAction = (cost: number, yieldInc: number, name: string, icon: string, type: string, payload: any) => {
+
+    const evalAction = (cost: number, yieldInc: number, name: string, icon: string, type: 'BUY' | 'UPGRADE', payload: any, detail: string) => {
       const costToSave = Math.max(0, cost - totalGold);
       const hoursToSave = effectiveYield > 0 ? (costToSave / effectiveYield) : (costToSave > 0 ? 9999 : 0);
       const productiveHours = EXIT_HORIZON_HOURS - hoursToSave;
       if (productiveHours > 0) {
-        options.push({ name, cost, totalGems: yieldInc * productiveHours, hoursToSave, icon, type, payload });
+        options.push({ 
+          name, 
+          cost, 
+          yieldInc,
+          totalGems: yieldInc * productiveHours, 
+          hoursToSave, 
+          icon, 
+          type, 
+          payload,
+          detail
+        });
       }
     };
+
     if (kingdom.tiles.includes(0)) {
-      BUILDING_TYPES.forEach(b => evalAction(b.cost, b.yield, b.name, b.icon, 'BUY', [b.type, b.cost]));
+      BUILDING_TYPES.forEach(b => evalAction(b.cost, b.yield, b.name, b.icon, 'BUY', [b.type, b.cost], `в свободный слот`));
     }
+
     activeBuildings.forEach(b => {
       if (b.upgrades < 9) {
         const base = BUILDING_TYPES.find(t => t.type === b.baseType);
-        if (base) evalAction(base.cost / 4, base.yield / 4, `${base.name} #${b.id}`, base.icon, 'UPGRADE', [b.id]);
+        if (base) {
+          evalAction(
+            base.cost / 4, 
+            base.yield / 4, 
+            base.name, 
+            base.icon, 
+            'UPGRADE', 
+            [b.id], 
+            `до LVL ${b.level + 1} в слоте #${b.id}`
+          );
+        }
       }
     });
+
     if (options.length === 0) return { type: 'STOP' };
     return options.sort((a, b) => b.totalGems - a.totalGems)[0];
   }, [kingdom, activeBuildings, totalGold]);
@@ -412,15 +419,23 @@ export default function App() {
                   <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center text-2xl animate-pulse">🎯</div>
                   <div>
                     <div className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-0.5">Советник_ИИ</div>
-                    <div className="text-white font-black text-lg leading-none">Рекомендация: {bestAction.name} {bestAction.icon}</div>
-                    <div className="text-[11px] text-zinc-400 flex gap-5 mt-1.5 font-bold">
-                      <span>Прибыль: <span className="text-emerald-400">+{Math.floor(bestAction.totalGems).toLocaleString()} 💎</span></span>
-                      <span>Статус: <span className={bestAction.hoursToSave <= 0 ? 'text-blue-400' : 'text-amber-500'}>{bestAction.hoursToSave <= 0 ? 'ГОТОВО К ПОСТРОЙКЕ' : `ОЖИДАНИЕ ${Math.ceil(bestAction.hoursToSave)}ч`}</span></span>
+                    <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${bestAction.type === 'BUY' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
+                            {bestAction.type === 'BUY' ? 'ПОКУПКА' : 'УЛУЧШЕНИЕ'}
+                        </span>
+                        <div className="text-white font-black text-lg leading-none">{bestAction.name} {bestAction.icon}</div>
+                    </div>
+                    <div className="text-[11px] text-zinc-300 font-bold mb-1.5 italic">Действие: {bestAction.detail}</div>
+                    <div className="text-[11px] text-zinc-400 flex flex-wrap gap-x-5 gap-y-1 font-bold">
+                      <span>Прирост: <span className="text-emerald-400">+{bestAction.yieldInc} G/ч</span></span>
+                      <span>Стоимость: <span className="text-amber-400">{bestAction.cost.toLocaleString()} G</span></span>
+                      <span>Чистый доход (30д): <span className="text-blue-400">{Math.floor(bestAction.totalGems).toLocaleString()} 💎</span></span>
+                      <span>Статус: <span className={bestAction.hoursToSave <= 0 ? 'text-emerald-400' : 'text-amber-500'}>{bestAction.hoursToSave <= 0 ? 'ДОСТУПНО' : `КОПИТЬ ${Math.ceil(bestAction.hoursToSave)}ч`}</span></span>
                     </div>
                   </div>
                 </div>
-                <button onClick={() => bestAction.type === 'BUY' ? executeTx('placeBuildings', [[kingdom!.tiles.indexOf(0)], bestAction.payload[0]]) : executeTx('upgradeBuilding', [bestAction.payload[0]])} disabled={totalGold < (bestAction.cost || 0)} className={`px-8 py-3 rounded-2xl font-black text-[12px] uppercase tracking-tighter transition-all shadow-xl ${totalGold >= (bestAction.cost || 0) ? 'bg-white text-black hover:bg-zinc-200 active:scale-95' : 'bg-zinc-800 text-zinc-600'}`}>
-                  {totalGold >= (bestAction.cost || 0) ? 'Выполнить' : `Ждать`}
+                <button onClick={() => bestAction.type === 'BUY' ? executeTx('placeBuildings', [[kingdom!.tiles.indexOf(0)], bestAction.payload[0]]) : executeTx('upgradeBuilding', [bestAction.payload[0]])} disabled={totalGold < (bestAction.cost || 0)} className={`px-8 py-4 rounded-2xl font-black text-[12px] uppercase tracking-tighter transition-all shadow-xl ${totalGold >= (bestAction.cost || 0) ? 'bg-white text-black hover:bg-zinc-200 active:scale-95' : 'bg-zinc-800 text-zinc-600'}`}>
+                  {totalGold >= (bestAction.cost || 0) ? 'ВЫПОЛНИТЬ' : `КОПИМ`}
                 </button>
               </div>
             )}
