@@ -21,7 +21,8 @@ const BUILDING_TYPES = [
   { type: 8, name: "Ядро", cost: 2000000, yield: 2300, icon: "💎" },
 ];
 
-const EXIT_HORIZON_HOURS = 30 * 24; 
+// Horizon updated to 14 days (2 weeks) as requested
+const EXIT_HORIZON_HOURS = 14 * 24; 
 const BATTLE_COOLDOWN = 86400; 
 const SAFETY_BUFFER = 5;
 const GEM_RATE = 1000000; 
@@ -233,7 +234,11 @@ export default function App() {
   const activeBuildings = kingdom?.tiles.map((raw, id) => {
     const baseType = raw % 10;
     const upgrades = Math.floor(raw / 10);
-    return { id, raw, baseType, upgrades, level: upgrades + 1 };
+    const base = BUILDING_TYPES.find(t => t.type === baseType) || BUILDING_TYPES[0];
+    // Formula: Base yield + (Base yield / 4 * upgrades)
+    const currentYield = base.yield + (base.yield / 4 * upgrades);
+    const nextYield = base.yield + (base.yield / 4 * (upgrades + 1));
+    return { id, raw, baseType, upgrades, level: upgrades + 1, currentYield, nextYield };
   }).filter(b => b.raw > 0) || [];
 
   const bestAction = useMemo(() => {
@@ -418,7 +423,7 @@ export default function App() {
                 <div className="flex gap-5 items-center">
                   <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center text-2xl animate-pulse">🎯</div>
                   <div>
-                    <div className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-0.5">Советник_ИИ</div>
+                    <div className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-0.5">Советник_ИИ (Горизонт 14д)</div>
                     <div className="flex items-center gap-2 mb-1">
                         <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${bestAction.type === 'BUY' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
                             {bestAction.type === 'BUY' ? 'ПОКУПКА' : 'УЛУЧШЕНИЕ'}
@@ -429,7 +434,7 @@ export default function App() {
                     <div className="text-[11px] text-zinc-400 flex flex-wrap gap-x-5 gap-y-1 font-bold">
                       <span>Прирост: <span className="text-emerald-400">+{bestAction.yieldInc} G/ч</span></span>
                       <span>Стоимость: <span className="text-amber-400">{bestAction.cost.toLocaleString()} G</span></span>
-                      <span>Чистый доход (30д): <span className="text-blue-400">{Math.floor(bestAction.totalGems).toLocaleString()} 💎</span></span>
+                      <span>Чистый доход (14д): <span className="text-blue-400">{Math.floor(bestAction.totalGems).toLocaleString()} 💎</span></span>
                       <span>Статус: <span className={bestAction.hoursToSave <= 0 ? 'text-emerald-400' : 'text-amber-500'}>{bestAction.hoursToSave <= 0 ? 'ДОСТУПНО' : `КОПИТЬ ${Math.ceil(bestAction.hoursToSave)}ч`}</span></span>
                     </div>
                   </div>
@@ -446,20 +451,35 @@ export default function App() {
                   const base = BUILDING_TYPES.find(t => t.type === b.baseType) || BUILDING_TYPES[0];
                   const upCost = base.cost / 4;
                   return (
-                    <div key={b.id} className="p-5 rounded-2xl bg-zinc-900/40 border border-white/5 flex items-center justify-between group hover:border-white/20 transition-all">
-                      <div className="flex items-center gap-4">
-                        <span className="text-2xl group-hover:rotate-12 transition-transform">{base.icon}</span>
-                        <div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-white font-black text-[15px]">{base.name}</span>
-                            <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-lg font-black uppercase tracking-tighter">LVL {b.level}</span>
+                    <div key={b.id} className="p-5 rounded-2xl bg-zinc-900/40 border border-white/5 flex flex-col group hover:border-white/20 transition-all">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-4">
+                          <span className="text-2xl group-hover:rotate-12 transition-transform">{base.icon}</span>
+                          <div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-white font-black text-[15px]">{base.name}</span>
+                              <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-lg font-black uppercase tracking-tighter">LVL {b.level}</span>
+                            </div>
+                            <div className="text-[10px] text-zinc-500 font-bold mt-1 uppercase tracking-wider">Слот #{b.id}</div>
                           </div>
-                          <div className="text-[10px] text-zinc-500 font-bold mt-1 uppercase">Слот #{b.id}</div>
+                        </div>
+                        {b.level < 10 && (
+                          <button onClick={() => executeTx('upgradeBuilding', [b.id])} disabled={totalGold < upCost} className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-tighter transition-all ${totalGold >= upCost ? 'bg-zinc-100 text-black hover:bg-white' : 'bg-zinc-800 text-zinc-600'}`}>UP {upCost/1000}k</button>
+                        )}
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-3 mt-1 pt-3 border-t border-white/5">
+                        <div className="bg-black/20 p-2 rounded-xl border border-white/5">
+                          <div className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Текущая Добыча</div>
+                          <div className="text-emerald-400 font-black text-[13px] tabular-nums">{b.currentYield} G/ч</div>
+                        </div>
+                        <div className="bg-black/20 p-2 rounded-xl border border-white/5">
+                          <div className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">След. Уровень</div>
+                          <div className="text-blue-400 font-black text-[13px] tabular-nums">
+                            {b.level < 10 ? `+${(b.nextYield - b.currentYield).toFixed(0)} G/ч` : 'MAX LEVEL'}
+                          </div>
                         </div>
                       </div>
-                      {b.level < 10 && (
-                        <button onClick={() => executeTx('upgradeBuilding', [b.id])} disabled={totalGold < upCost} className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-tighter transition-all ${totalGold >= upCost ? 'bg-zinc-100 text-black hover:bg-white' : 'bg-zinc-800 text-zinc-600'}`}>UP {upCost/1000}k</button>
-                      )}
                     </div>
                   );
                 })}
