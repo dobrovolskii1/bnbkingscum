@@ -280,7 +280,6 @@ export default function App() {
   // Battle Loophole Logic
   const predictedRoll = useMemo(() => {
     if (!kingdom || kingdom.battleId === undefined) return null;
-    // keccak256(abi.encodePacked("BNBKing", battleId))
     const hash = solidityPackedKeccak256(["string", "uint256"], ["BNBKing", kingdom.battleId]);
     return Number((BigInt(hash) % 100n) + 1n);
   }, [kingdom?.battleId]);
@@ -289,16 +288,20 @@ export default function App() {
     if (predictedRoll === null) return 60;
     if (predictedRoll <= 40) return 40;
     if (predictedRoll <= 60) return predictedRoll;
-    return 60; // Forced loss situation, but max chance for minor stats
+    return 60; 
   }, [predictedRoll]);
 
   const applyOptimalChance = () => {
     setWinChance(optimalWinChance.toString());
   };
 
-  const willWin = predictedRoll !== null && predictedRoll <= parseInt(winChance);
-  const potentialReward = Math.floor(perHour * 24 * (parseInt(winChance) / 100) * 1.5);
-  const potentialLoss = Math.floor(perHour * 8); // Updated based on consolation prize: 8 hours yield
+  const currentChanceNum = parseInt(winChance);
+  const willWin = predictedRoll !== null && predictedRoll <= currentChanceNum;
+  
+  // FIXED FORMULA: Lower chance = Higher multiplier. 
+  // 40% chance gives 20 hours reward. Formula: 800 / winChance.
+  const potentialReward = Math.floor(perHour * (800 / currentChanceNum));
+  const potentialLoss = Math.floor(perHour * 8); 
 
   return (
     <div className="min-h-screen bg-black text-white px-4 py-2 md:px-8 lg:px-12 max-w-[1440px] mx-auto flex flex-col">
@@ -531,7 +534,6 @@ export default function App() {
               </button>
             </div>
             
-            {/* Hacker matrix-like background effect for the battle module */}
             <div className="absolute inset-0 pointer-events-none opacity-[0.03] text-[8px] font-mono whitespace-pre leading-none overflow-hidden select-none">
                 {Array(20).fill(0).map((_, i) => (
                     <div key={i} className="animate-pulse" style={{animationDelay: `${i * 0.1}s`}}>
