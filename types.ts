@@ -7,6 +7,7 @@ export interface KingdomData {
   alliesEarned: number;
   claimTime: number;
   battleTime: number;
+  battleId: number;
   tiles: number[]; // Array of 360 levels for each tile
 }
 

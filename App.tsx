@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ethers, BrowserProvider, Contract, formatEther, isAddress } from 'ethers';
+import { ethers, BrowserProvider, Contract, formatEther, isAddress, solidityPackedKeccak256 } from 'ethers';
 import { CONTRACT_ADDRESS, CONTRACT_ABI, BSC_RPC_URL, BSC_CHAIN_ID } from './constants';
 import { KingdomData, LogEntry } from './types';
 
@@ -183,6 +183,7 @@ export default function App() {
         alliesEarned: Number(kd[4]),
         claimTime: Number(kd[5]),
         battleTime: Number(kd[6]),
+        battleId: Number(kd[7]),
         tiles: Array.from(kd[11]).map(t => Number(t))
       });
     } catch (err) { }
@@ -229,12 +230,11 @@ export default function App() {
   const dailyOutflow = deltaBnb < 0 ? Math.abs(deltaBnb) : 0;
   const poolRunwayDays = dailyOutflow > 0.001 ? (contractBalance.raw / dailyOutflow) : null;
 
-  // Adaptive Advisor Horizon: Use pool life expectancy or 30 days if pool is growing
   const dynamicHorizonHours = useMemo(() => {
       if (poolRunwayDays !== null && poolRunwayDays < 60) {
-          return Math.max(24, Math.floor(poolRunwayDays * 24)); // Minimum 24h horizon
+          return Math.max(24, Math.floor(poolRunwayDays * 24));
       }
-      return 30 * 24; // Default to 30 days if pool is healthy
+      return 30 * 24;
   }, [poolRunwayDays]);
 
   const activeBuildings = useMemo(() => {
@@ -259,17 +259,7 @@ export default function App() {
       const hoursToSave = effectiveYield > 0 ? (costToSave / effectiveYield) : (costToSave > 0 ? 9999 : 0);
       const productiveHours = dynamicHorizonHours - hoursToSave;
       if (productiveHours > 0) {
-        options.push({ 
-          name, 
-          cost, 
-          yieldInc,
-          totalGems: yieldInc * productiveHours, 
-          hoursToSave, 
-          icon, 
-          type, 
-          payload,
-          detail
-        });
+        options.push({ name, cost, yieldInc, totalGems: yieldInc * productiveHours, hoursToSave, icon, type, payload, detail });
       }
     };
 
@@ -279,15 +269,7 @@ export default function App() {
 
     activeBuildings.forEach(b => {
       if (b.upgrades < 9) {
-        evalAction(
-          b.upCost, 
-          b.nextYieldDelta, 
-          b.name, 
-          b.icon, 
-          'UPGRADE', 
-          [b.id], 
-          `до LVL ${b.level + 1} в слоте #${b.id}`
-        );
+        evalAction(b.upCost, b.nextYieldDelta, b.name, b.icon, 'UPGRADE', [b.id], `до LVL ${b.level + 1} в слоте #${b.id}`);
       }
     });
 
@@ -295,8 +277,28 @@ export default function App() {
     return options.sort((a, b) => b.totalGems - a.totalGems)[0];
   }, [kingdom, activeBuildings, totalGold, dynamicHorizonHours]);
 
+  // Battle Loophole Logic
+  const predictedRoll = useMemo(() => {
+    if (!kingdom || kingdom.battleId === undefined) return null;
+    // keccak256(abi.encodePacked("BNBKing", battleId))
+    const hash = solidityPackedKeccak256(["string", "uint256"], ["BNBKing", kingdom.battleId]);
+    return Number((BigInt(hash) % 100n) + 1n);
+  }, [kingdom?.battleId]);
+
+  const optimalWinChance = useMemo(() => {
+    if (predictedRoll === null) return 60;
+    if (predictedRoll <= 40) return 40;
+    if (predictedRoll <= 60) return predictedRoll;
+    return 60; // Forced loss situation, but max chance for minor stats
+  }, [predictedRoll]);
+
+  const applyOptimalChance = () => {
+    setWinChance(optimalWinChance.toString());
+  };
+
+  const willWin = predictedRoll !== null && predictedRoll <= parseInt(winChance);
   const potentialReward = Math.floor(perHour * 24 * (parseInt(winChance) / 100) * 1.5);
-  const potentialLoss = Math.floor(perHour * 24 * 0.5);
+  const potentialLoss = Math.floor(perHour * 8); // Updated based on consolation prize: 8 hours yield
 
   return (
     <div className="min-h-screen bg-black text-white px-4 py-2 md:px-8 lg:px-12 max-w-[1440px] mx-auto flex flex-col">
@@ -348,11 +350,6 @@ export default function App() {
                   {poolRunwayDays !== null && (
                       <div className="text-[9px] font-black uppercase tracking-widest text-blue-400/80">
                           Живучесть пула: <span className="text-blue-400">~{poolRunwayDays.toFixed(0)} дн.</span>
-                      </div>
-                  )}
-                  {deltaBnb >= 0 && yesterdayBalance !== null && (
-                      <div className="text-[9px] font-black uppercase tracking-widest text-emerald-500/80">
-                          Статус: <span className="text-emerald-400">Пул растет 📈</span>
                       </div>
                   )}
               </div>
@@ -442,7 +439,6 @@ export default function App() {
                       <span>Прирост: <span className="text-emerald-400">+{bestAction.yieldInc} G/ч</span></span>
                       <span>Стоимость: <span className="text-amber-400">{bestAction.cost.toLocaleString()} G</span></span>
                       <span>Чистый профит: <span className="text-blue-400">{Math.floor(bestAction.totalGems).toLocaleString()} 💎</span></span>
-                      <span>Статус: <span className={bestAction.hoursToSave <= 0 ? 'text-emerald-400' : 'text-amber-500'}>{bestAction.hoursToSave <= 0 ? 'ДОСТУПНО' : `КОПИТЬ ${Math.ceil(bestAction.hoursToSave)}ч`}</span></span>
                     </div>
                   </div>
                 </div>
@@ -490,29 +486,58 @@ export default function App() {
             </div>
           </div>
 
-          <div className="apple-dark-card p-7 h-[260px] flex flex-col justify-between border-red-500/20 hover:border-red-500/40 transition-all bg-red-500/[0.02]">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-[11px] font-black text-zinc-400 uppercase tracking-[0.3em]">Боевой_Модуль</h2>
+          <div className="apple-dark-card p-7 h-[300px] flex flex-col justify-between border-red-500/20 hover:border-red-500/40 transition-all bg-red-500/[0.02] relative overflow-hidden">
+            <div className="flex justify-between items-start z-10">
+              <div>
+                <h2 className="text-[11px] font-black text-zinc-400 uppercase tracking-[0.3em] mb-1">Боевой_Модуль</h2>
+                <div className="text-[9px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded font-black uppercase tracking-tighter">СИСТЕМА СКОМПРОМЕТИРОВАНА ⚠️</div>
+              </div>
               <div className="text-right">
                 <div className="text-[11px] text-emerald-500 font-black uppercase tracking-tighter">WIN: +{potentialReward.toLocaleString()} G</div>
-                <div className="text-[11px] text-red-500 font-black uppercase tracking-tighter">LOSS: -{potentialLoss.toLocaleString()} G</div>
+                <div className="text-[11px] text-red-500 font-black uppercase tracking-tighter">CONSOLATION: +{potentialLoss.toLocaleString()} G</div>
               </div>
             </div>
-            <div className="bg-black/40 p-5 rounded-2xl border border-white/5 flex items-center gap-8">
-              <input type="range" min="40" max="60" value={winChance} onChange={e => setWinChance(e.target.value)} className="flex-1 h-2" />
-              <div className="w-16 h-16 bg-white text-black rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-2xl">
-                <span className="text-[10px] font-black uppercase opacity-40 leading-none">P(W)</span>
-                <span className="text-2xl font-black tracking-tighter">{winChance}%</span>
-              </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-4 z-10">
+                <div className="bg-zinc-900/80 p-4 rounded-2xl border border-white/5 flex flex-col justify-center">
+                    <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">СКАНИРОВАНИЕ БЛОКЧЕЙНА</span>
+                    <div className="flex items-center gap-4">
+                        <div className="text-3xl font-black text-white tabular-nums tracking-tighter">{predictedRoll ?? '??'}</div>
+                        <div className="flex-1">
+                            <div className={`text-[10px] font-black uppercase ${willWin ? 'text-emerald-400' : 'text-red-400'}`}>
+                                ИСХОД: {willWin ? 'ГАРАНТИРОВАННАЯ ПОБЕДА' : 'УТЕШИТЕЛЬНЫЙ ПРИЗ'}
+                            </div>
+                            <button onClick={applyOptimalChance} className="text-[10px] text-blue-400 underline font-black uppercase mt-1 hover:text-blue-300">Применить Оптимальный Шанс</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-black/40 p-4 rounded-2xl border border-white/5 flex flex-col justify-center">
+                    <div className="flex justify-between items-center mb-2">
+                         <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">ШАНС ПОБЕДЫ</span>
+                         <span className="text-lg font-black text-white">{winChance}%</span>
+                    </div>
+                    <input type="range" min="40" max="60" value={winChance} onChange={e => setWinChance(e.target.value)} className="w-full h-2" />
+                </div>
             </div>
-            <div className="relative mt-2">
+
+            <div className="relative z-10">
               <button 
                 onClick={() => executeTx('battle', [parseInt(winChance)])} 
                 disabled={!isBattleReady || perHour === 0 || loading} 
-                className={`w-full py-5 rounded-2xl font-black text-[15px] uppercase tracking-[0.2em] transition-all ${isBattleReady && perHour > 0 ? 'bg-white text-black hover:scale-[1.02] active:scale-95 shadow-2xl shadow-white/10' : 'bg-zinc-800 text-zinc-700 cursor-not-allowed'}`}
+                className={`w-full py-5 rounded-2xl font-black text-[15px] uppercase tracking-[0.2em] transition-all ${isBattleReady && perHour > 0 ? 'bg-white text-black hover:scale-[1.01] active:scale-95 shadow-2xl shadow-white/10' : 'bg-zinc-800 text-zinc-700 cursor-not-allowed'}`}
               >
-                {isBattleReady ? 'ИНИЦИИРОВАТЬ АТАКУ' : `ПЕРЕЗАРЯДКА: ${battleCooldownStr}`}
+                {isBattleReady ? (willWin ? 'АКТИВИРОВАТЬ ГАРАНТИРОВАННУЮ ПОБЕДУ' : 'ЗАБРАТЬ УТЕШИТЕЛЬНЫЙ ПРИЗ') : `ПЕРЕЗАРЯДКА: ${battleCooldownStr}`}
               </button>
+            </div>
+            
+            {/* Hacker matrix-like background effect for the battle module */}
+            <div className="absolute inset-0 pointer-events-none opacity-[0.03] text-[8px] font-mono whitespace-pre leading-none overflow-hidden select-none">
+                {Array(20).fill(0).map((_, i) => (
+                    <div key={i} className="animate-pulse" style={{animationDelay: `${i * 0.1}s`}}>
+                        {solidityPackedKeccak256(["string", "uint256"], ["BNBKing", i]).repeat(5)}
+                    </div>
+                ))}
             </div>
           </div>
         </div>
